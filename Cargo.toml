@@ -1,0 +1,36 @@
+[package]
+name = "vectis-crdt"
+version = "0.1.0"
+edition = "2021"
+description = "CRDT engine for real-time collaborative whiteboards. RGA/YATA z-order + LWW stroke properties, binary wire format, Wasm-ready."
+license = "MIT"
+repository = "https://github.com/RafaCalRob/vectis-crdt"
+homepage = "https://github.com/RafaCalRob/vectis-crdt"
+documentation = "https://docs.rs/vectis-crdt"
+keywords = ["crdt", "wasm", "collaborative", "whiteboard", "rga"]
+categories = ["data-structures", "wasm", "algorithms"]
+authors = ["RafaCalRob"]
+rust-version = "1.70"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["wasm"]
+wasm     = ["wasm-bindgen", "js-sys"]
+compress = ["lz4_flex"]
+
+[dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys       = { version = "0.3", optional = true }
+lz4_flex     = { version = "0.11", optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+proptest          = "1"
+
+[profile.release]
+opt-level     = "z"
+lto           = true
+codegen-units = 1
+panic         = "abort"
