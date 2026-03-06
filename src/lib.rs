@@ -58,3 +58,6 @@ pub mod compression;
 
 #[cfg(feature = "wasm")]
 pub mod wasm_bridge;
+
+#[cfg(feature = "python")]
+pub mod python;

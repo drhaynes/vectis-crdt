@@ -71,7 +71,7 @@ assert_eq!(doc.visible_stroke_ids(), peer.visible_stroke_ids());
 
 ```bash
 cargo install wasm-pack
-wasm-pack build --target web --out-dir pkg
+wasm-pack build --features wasm --target web --out-dir pkg
 ```
 
 ```javascript
@@ -116,13 +116,26 @@ const view = new DataView(wasmMemory.buffer, ptr, len);
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `wasm` | yes | wasm-bindgen + JS API |
+| `wasm` | no | wasm-bindgen + JS API |
+| `python` | no | PyO3 Python bindings |
 | `compress` | no | LZ4 compression for payloads > 200 B |
 
-To use without Wasm (pure Rust library):
+Pure Rust (default — no extra deps):
 
 ```toml
-vectis-crdt = { version = "0.1", default-features = false }
+vectis-crdt = "0.1"
+```
+
+With Wasm:
+
+```toml
+vectis-crdt = { version = "0.1", features = ["wasm"] }
+```
+
+With Python (via maturin):
+
+```bash
+maturin develop --features python
 ```
 
 ## Architecture
