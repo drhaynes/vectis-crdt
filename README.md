@@ -1,19 +1,22 @@
 # vectis-crdt
 
-CRDT engine for real-time collaborative whiteboards, compiled to WebAssembly.
+[![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
+[![WebAssembly](https://img.shields.io/badge/WebAssembly-ready-654ff0?logo=webassembly)](https://webassembly.org/)
+[![CRDT](https://img.shields.io/badge/CRDT-RGA%2FYATA%20%2B%20LWW-blue)](https://crdt.tech/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 **vectis** (lat.) — arrow, vector.
 
+A Rust CRDT library for ordered collections of mutable objects, compiled to WebAssembly. It provides **Strong Eventual Consistency** for any domain where items have a defined z-order and independently mutable properties — built primarily for vector strokes on collaborative canvases, but applicable to any sequence of richly-attributed objects.
+
+The library combines two complementary conflict-free data structures:
+
+- **[`RgaArray`]** — a YATA-style Replicated Growable Array that maintains a deterministic total order over items. Concurrent inserts from any number of peers converge to the same sequence without coordination, using Lamport timestamps and actor IDs as a tiebreak. Tombstones are retained for causal consistency and reclaimed via incremental GC once causally stable (MVV-gated).
+- **[`LwwRegister`]** — a Last-Write-Wins register per mutable property (color, width, opacity, affine transform). Each property is an independent register with its own OpId timestamp, so concurrent edits to different properties of the same item are always preserved — only true conflicts (same property, same instant) are resolved deterministically by OpId order.
+
+Operations are encoded in a compact binary format (LEB128 varints + LE floats), synchronized via vector clock state vectors for delta delivery, and can be applied in any order — the causal buffer holds out-of-order operations until their dependencies arrive. The Wasm API exposes a zero-copy render path: visible item data is written into a reusable buffer in Wasm linear memory and read directly from JS via `DataView`, with optional viewport culling via AABB intersection.
+
 ---
-
-## What it does
-
-Keeps a shared whiteboard state consistent across multiple peers without a coordinating server. Two clients that apply the same set of operations in any order always converge to the same result.
-
-The whiteboard state is two independent CRDTs:
-
-- **RGA/YATA** — Replicated Growable Array for stroke z-order. Concurrent inserts converge deterministically without a tiebreaker server.
-- **LWW-Register** — Last-Write-Wins register per stroke property (color, width, opacity, transform). Independent registers allow granular concurrent edits without conflicts.
 
 ## Features
 
