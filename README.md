@@ -1,73 +1,144 @@
 # vectis-crdt
 
-[![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![WebAssembly](https://img.shields.io/badge/WebAssembly-ready-654ff0?logo=webassembly)](https://webassembly.org/)
-[![CRDT](https://img.shields.io/badge/CRDT-RGA%2FYATA%20%2B%20LWW-blue)](https://crdt.tech/)
+[![crates.io](https://img.shields.io/crates/v/vectis-crdt?label=crates.io&logo=rust)](https://crates.io/crates/vectis-crdt)
+[![npm](https://img.shields.io/npm/v/vectis-crdt?label=npm&logo=npm)](https://www.npmjs.com/package/vectis-crdt)
+[![docs.rs](https://img.shields.io/docsrs/vectis-crdt?logo=docs.rs)](https://docs.rs/vectis-crdt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 **vectis** (lat.) — arrow, vector.
 
-A Rust CRDT library for ordered collections of mutable objects, compiled to WebAssembly. It provides **Strong Eventual Consistency** for any domain where items have a defined z-order and independently mutable properties — built primarily for vector strokes on collaborative canvases, but applicable to any sequence of richly-attributed objects.
+A Rust CRDT library for ordered collections of mutable objects. Provides **Strong Eventual Consistency** for sequences of richly-attributed items — built for collaborative canvases (strokes, shapes, layers), but applicable to any domain requiring deterministic z-order with independently mutable properties.
 
-The library combines two complementary conflict-free data structures:
+Distributed as three packages from the same source:
 
-- **[`RgaArray`]** — a YATA-style Replicated Growable Array that maintains a deterministic total order over items. Concurrent inserts from any number of peers converge to the same sequence without coordination, using Lamport timestamps and actor IDs as a tiebreak. Tombstones are retained for causal consistency and reclaimed via incremental GC once causally stable (MVV-gated).
-- **[`LwwRegister`]** — a Last-Write-Wins register per mutable property (color, width, opacity, affine transform). Each property is an independent register with its own OpId timestamp, so concurrent edits to different properties of the same item are always preserved — only true conflicts (same property, same instant) are resolved deterministically by OpId order.
-
-Operations are encoded in a compact binary format (LEB128 varints + LE floats), synchronized via vector clock state vectors for delta delivery, and can be applied in any order — the causal buffer holds out-of-order operations until their dependencies arrive. The Wasm API exposes a zero-copy render path: visible item data is written into a reusable buffer in Wasm linear memory and read directly from JS via `DataView`, with optional viewport culling via AABB intersection.
+| Package | Install |
+|---------|---------|
+| **Rust** (native or Wasm) | `cargo add vectis-crdt` |
+| **TypeScript/JS** (pre-built Wasm + TS wrapper) | `npm install vectis-crdt` |
+| **Python** (PyO3 bindings, build from source) | `maturin develop --features python` |
 
 ---
 
-## Features
+## How it works
 
-- Binary wire format (LEB128 varints + LE floats) — compact stroke payloads
-- Delta sync via vector clock state vectors — only send what the peer is missing
-- Incremental tombstone GC with origin re-parenting — bounded memory growth
-- Viewport culling with AABB bounds — O(visible) render data, not O(total)
-- RDP stroke simplification — configurable epsilon, iterative (no stack overflow)
-- Causal delivery buffer — out-of-order ops buffered until causally deliverable
-- Ephemeral cursor awareness — TTL-based, not persisted to CRDT state
-- Local undo — stack of local op IDs, depth 200, skips remotely deleted strokes
-- Optional LZ4 compression — feature-gated, threshold 200 B
-- Wasm-bindgen JS API — zero-copy render data via raw Wasm memory pointer
+Two complementary CRDTs handle the two independent concerns:
 
-## Usage
+- **`RgaArray`** (YATA variant) — deterministic z-order for concurrent inserts from any number of peers, using Lamport timestamps + actor IDs as a tiebreak. No coordination needed.
+- **`LwwRegister`** per property — Last-Write-Wins for mutable attributes (color, width, opacity, transform). Each property has its own timestamp so concurrent edits to *different* properties are always preserved.
+
+All operations encode to a compact binary format (LEB128 varints + LE floats). A causal buffer holds out-of-order ops until their dependencies arrive. Tombstones are GC'd once causally stable, with origin re-parenting to preserve z-order in snapshots.
+
+---
+
+## Installation
 
 ### Rust
+
+```toml
+# Cargo.toml
+
+# Pure Rust (no extra deps, for native servers/tests)
+vectis-crdt = "0.1"
+
+# With WebAssembly bindings
+vectis-crdt = { version = "0.1", features = ["wasm"] }
+
+# With LZ4 compression (payloads > 200 B)
+vectis-crdt = { version = "0.1", features = ["compress"] }
+```
+
+### TypeScript / JavaScript
+
+The npm package ships pre-built Wasm and a TypeScript wrapper — no Rust toolchain required.
+
+```bash
+npm install vectis-crdt
+# or
+pnpm add vectis-crdt
+```
+
+### Python
+
+Not yet on PyPI. Build from source with [maturin](https://maturin.rs/):
+
+```bash
+git clone https://github.com/RafaCalRob/vectis-crdt
+cd vectis-crdt
+maturin develop --features python
+```
+
+---
+
+## Quick start
+
+### TypeScript (npm)
+
+The high-level `VectisDocument` class handles WebSocket sync, serialization, and render data parsing:
+
+```typescript
+import { VectisDocument, ToolKind } from "vectis-crdt";
+
+// Create a document and connect to a sync server
+const doc = await VectisDocument.create(actorId, "wss://your-server/ws");
+
+doc.onStrokesChanged = (strokes) => {
+  // Re-render: strokes is an array of RenderStroke objects
+  for (const s of strokes) {
+    drawStroke(s.tool, s.color, s.strokeWidth, s.points); // s.points is a Float32Array view
+  }
+};
+
+// Insert a stroke (points: [x, y, pressure, x, y, pressure, ...])
+const strokeId = await doc.insertStroke(
+  new Float32Array([0, 0, 1.0, 100, 100, 0.8, 200, 50, 0.9]),
+  { tool: ToolKind.Pen, color: 0xFF0000FF, strokeWidth: 3.0, opacity: 1.0 }
+);
+
+// Update a property — propagates to all peers automatically
+await doc.updateStrokeColor(strokeId, 0x0000FFFF);
+
+// Undo the last local stroke
+await doc.undo();
+
+// Viewport-culled render data (zero-copy)
+const visible = doc.getRenderDataViewport(camX, camY, camX + w, camY + h, 16);
+```
+
+### Rust (native)
 
 ```rust
 use vectis_crdt::document::Document;
 use vectis_crdt::stroke::{StrokeData, StrokePoint, StrokeProperties, ToolKind};
 use vectis_crdt::types::{ActorId, OpId};
 
-let mut doc = Document::new(ActorId(1));
+let mut doc_a = Document::new(ActorId(1));
+let mut doc_b = Document::new(ActorId(2));
 
-// Build stroke data
+// Insert a stroke locally on peer A
 let points: Box<[StrokePoint]> = vec![
-    StrokePoint::new(0.0, 0.0, 1.0),
+    StrokePoint::new(0.0,  0.0,  1.0),
     StrokePoint::new(10.0, 10.0, 0.8),
 ].into();
-let data = StrokeData::new(points, ToolKind::Pen);
+let data  = StrokeData::new(points, ToolKind::Pen);
 let props = StrokeProperties::new(0xFF0000FF, 2.0, 1.0, OpId::ZERO);
+let _id   = doc_a.insert_stroke(data, props);
 
-// Insert locally — generates a pending op
-let stroke_id = doc.insert_stroke(data, props);
+// Encode and send to peer B
+let ops   = doc_a.take_pending_ops();
+let bytes = vectis_crdt::encoding::encode_update(&ops);
 
-// Drain pending ops to encode and send over the wire
-let ops = doc.take_pending_ops();
-let wire_bytes = vectis_crdt::encoding::encode_update(&ops);
-
-// Apply on a remote peer
-let mut peer = Document::new(ActorId(2));
-let remote_ops = vectis_crdt::encoding::decode_update(&wire_bytes).unwrap();
+// Apply on peer B — order doesn't matter, convergence is guaranteed
+let remote_ops = vectis_crdt::encoding::decode_update(&bytes).unwrap();
 for op in remote_ops {
-    peer.apply_remote(op);
+    doc_b.apply_remote(op);
 }
 
-assert_eq!(doc.visible_stroke_ids(), peer.visible_stroke_ids());
+assert_eq!(doc_a.visible_stroke_ids(), doc_b.visible_stroke_ids());
 ```
 
-### WebAssembly
+### WebAssembly (low-level)
+
+If you need direct Wasm control, build with `wasm-pack` and use the `WasmDocument` API:
 
 ```bash
 cargo install wasm-pack
@@ -78,73 +149,65 @@ wasm-pack build --features wasm --target web --out-dir pkg
 import init, { WasmDocument } from "./pkg/vectis_crdt.js";
 
 await init();
+const doc = new WasmDocument(1n); // actorId as BigInt
 
-// actor_id: u64 passed as BigInt from JS
-const doc = new WasmDocument(1n);
-
-// Insert stroke: flat Float32Array [x, y, pressure, x, y, pressure, ...]
-// tool: 0=Pen, 1=Eraser, 2=Marker, 3=Laser, 4=Shape, 5=Arrow
-// color: 0xRRGGBBAA, stroke_width: f32, opacity: 0.0–1.0
+// Insert a stroke
+// tool: 0=Pen 1=Eraser 2=Marker 3=Laser 4=Shape 5=Arrow
+// color: 0xRRGGBBAA as u32
 const strokeId = doc.insert_stroke(
     new Float32Array([0, 0, 1.0, 10, 10, 0.8]),
-    0,          // tool: Pen
-    0xFF0000FF, // color: red
+    0,          // Pen
+    0xFF0000FF,
     2.0,        // stroke_width
     1.0,        // opacity
 );
-// strokeId: Uint8Array of 16 bytes (lamport u64 LE + actor u64 LE)
+// strokeId: Uint8Array(16) = lamport u64 LE + actor u64 LE
 
-// Encode pending ops and send over WebSocket
+// Encode ops and send over WebSocket
 const update = doc.encode_pending_update();
 // ws.send(update)
 
-// Apply a binary update received from another peer
+// Apply update received from another peer
 // doc.apply_update(receivedBytes)
 
-// Get render data for the current viewport (zero-copy)
+// Zero-copy render data for viewport
 const ptr = doc.build_render_data_viewport(
-    camX, camY,               // top-left in canvas coords
-    camX + viewW, camY + viewH, // bottom-right
-    16.0,                      // stroke_expand: half of max stroke_width
+    camX, camY, camX + viewW, camY + viewH,
+    16.0, // stroke_expand (half of max stroke_width)
 );
-const len = doc.get_render_data_len();
-const view = new DataView(wasmMemory.buffer, ptr, len);
-// Parse strokes from view — see ARCHITECTURE.md §14 for layout
+const view = new DataView(wasmMemory.buffer, ptr, doc.get_render_data_len());
+// Read strokes from view — see ARCHITECTURE.md §14 for buffer layout
 ```
+
+---
+
+## Features
+
+- **Binary wire format** — LEB128 varints + LE floats; `DeleteStroke` ~6 bytes vs ~120 B JSON
+- **Delta sync** — vector clock state vectors; only send what a peer is missing
+- **Causal delivery buffer** — out-of-order ops held until causally deliverable
+- **Incremental tombstone GC** — MVV-gated, with origin re-parenting to preserve z-order in snapshots
+- **Viewport culling** — AABB per stroke, O(visible) render data instead of O(total)
+- **RDP simplification** — configurable epsilon, iterative (no stack overflow at 240 Hz input rates)
+- **Ephemeral cursor awareness** — 28-byte fixed format, TTL eviction, not persisted to CRDT state
+- **Local undo** — depth 200, skips remotely-deleted strokes, generates real `DeleteStroke` ops
+- **Optional LZ4 compression** — feature-gated, threshold 200 B
+
+---
 
 ## Feature flags
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `wasm` | no | wasm-bindgen + JS API |
-| `python` | no | PyO3 Python bindings |
-| `compress` | no | LZ4 compression for payloads > 200 B |
+| `wasm` | no | `wasm-bindgen` + `js-sys` — enables `WasmDocument` and the JS/TS API |
+| `python` | no | `pyo3` — Python bindings via maturin |
+| `compress` | no | `lz4_flex` — LZ4 compression for payloads over 200 B |
 
-Pure Rust (default — no extra deps):
-
-```toml
-vectis-crdt = "0.1"
-```
-
-With Wasm:
-
-```toml
-vectis-crdt = { version = "0.1", features = ["wasm"] }
-```
-
-With Python (via maturin):
-
-```bash
-maturin develop --features python
-```
-
-## Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed description of every design decision: why RGA/YATA over OT or Automerge, the GC re-parenting algorithm, the binary wire format, delta sync, and defensive limits.
+---
 
 ## Safety limits
 
-The library enforces hard limits to prevent resource exhaustion from malformed or malicious peers:
+Hard limits enforced on all external data paths — returns `VectisError::LimitExceeded`, never panics:
 
 | Limit | Value |
 |-------|-------|
@@ -154,24 +217,29 @@ The library enforces hard limits to prevent resource exhaustion from malformed o
 | Causal buffer capacity | 10 000 ops |
 | Undo depth | 200 ops |
 
-Exceeding these returns `VectisError::LimitExceeded` — no panics.
+---
 
 ## Tests
 
 ```bash
 cargo test               # 46 unit tests + 7 property tests (200 cases each)
-cargo test --release     # faster property test runs
+cargo test --release     # faster for property tests
 ```
 
-Property tests (proptest) cover:
-
-- Two-actor convergence
-- Three-actor convergence
-- Commutativity
-- Idempotency
+Property tests (proptest) verify:
+- Two-actor and three-actor convergence
+- Commutativity and idempotency
 - Delete convergence
 - Causal buffer convergence
-- Snapshot round-trip
+- Snapshot round-trip integrity
+
+---
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design rationale: why RGA/YATA over OT and Automerge, the GC re-parenting algorithm, the binary wire format, delta sync internals, and the zero-copy Wasm render path.
+
+---
 
 ## License
 
