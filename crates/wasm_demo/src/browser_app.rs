@@ -1,126 +1,161 @@
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use app_core::{AppEvent, DemoApp, Peer};
+use app_core::{ClientApp, ClientEvent};
+use js_sys::{ArrayBuffer, Uint8Array};
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, PointerEvent};
+use web_sys::{
+    Blob, CanvasRenderingContext2d, Event, FileReader, HtmlCanvasElement, MessageEvent,
+    PointerEvent, WebSocket,
+};
 
-use crate::dom::{canvas_context, now, set_text};
+use crate::dom::{canvas_context, room_from_url, websocket_url};
 use crate::{render, ui};
 
 pub(crate) struct BrowserApp {
-    app: DemoApp,
-    alice_ctx: CanvasRenderingContext2d,
-    bob_ctx: CanvasRenderingContext2d,
-    packet_elements: BTreeMap<u32, HtmlElement>,
+    app: ClientApp,
+    ctx: CanvasRenderingContext2d,
+    ws: Option<WebSocket>,
 }
 
 impl BrowserApp {
     pub(crate) fn new() -> Result<Self, JsValue> {
+        let room = room_from_url();
         Ok(Self {
-            app: DemoApp::new(),
-            alice_ctx: canvas_context("canvas-alice")?,
-            bob_ctx: canvas_context("canvas-bob")?,
-            packet_elements: BTreeMap::new(),
+            app: ClientApp::new(room),
+            ctx: canvas_context("canvas-main")?,
+            ws: None,
         })
     }
 
-    pub(crate) fn frame(&mut self, now_ms: f64) {
-        let events = self.app.tick(now_ms);
-        self.handle_events(events);
-        render::render_peer(&self.alice_ctx, &self.app, Peer::Alice);
-        render::render_peer(&self.bob_ctx, &self.app, Peer::Bob);
-        render::render_packets(&self.packet_elements, &self.app, now_ms);
+    pub(crate) fn connect(app: &Rc<RefCell<Self>>) -> Result<(), JsValue> {
+        if let Some(ws) = app.borrow_mut().ws.take() {
+            let _ = ws.close();
+        }
+
+        let url = websocket_url(app.borrow().app.room())?;
+        let ws = WebSocket::new(&url)?;
+
+        {
+            let app = Rc::clone(app);
+            let onopen = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |_| {
+                app.borrow_mut().handle_open();
+            }));
+            ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
+            onopen.forget();
+        }
+
+        {
+            let app = Rc::clone(app);
+            let onmessage =
+                Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(move |event: MessageEvent| {
+                    if let Ok(buffer) = event.data().dyn_into::<ArrayBuffer>() {
+                        let bytes = Uint8Array::new(&buffer).to_vec();
+                        app.borrow_mut().handle_frame(&bytes);
+                    } else if let Ok(blob) = event.data().dyn_into::<Blob>() {
+                        read_blob_frame(Rc::clone(&app), blob);
+                    }
+                }));
+            ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+            onmessage.forget();
+        }
+
+        {
+            let app = Rc::clone(app);
+            let onclose = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |_| {
+                app.borrow_mut().handle_close();
+            }));
+            ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
+            onclose.forget();
+        }
+
+        {
+            let app = Rc::clone(app);
+            let onerror = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |_| {
+                app.borrow_mut().handle_close();
+            }));
+            ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+            onerror.forget();
+        }
+
+        app.borrow_mut().ws = Some(ws);
+        Ok(())
+    }
+
+    pub(crate) fn frame(&mut self, _now_ms: f64) {
+        render::render_app(&self.ctx, &self.app);
         ui::update_stats(&self.app);
-        ui::update_network_controls(&self.app);
+        ui::update_controls(&self.app);
         ui::render_log(&self.app);
     }
 
-    pub(crate) fn pointer_down(
-        &mut self,
-        peer: Peer,
-        canvas: &HtmlCanvasElement,
-        event: &PointerEvent,
-        color: u32,
-    ) {
-        self.app
-            .begin_stroke(peer, render::pointer_pos(canvas, event), color);
+    pub(crate) fn pointer_down(&mut self, canvas: &HtmlCanvasElement, event: &PointerEvent) {
+        self.app.begin_stroke(render::pointer_pos(canvas, event));
     }
 
-    pub(crate) fn pointer_move(
-        &mut self,
-        peer: Peer,
-        canvas: &HtmlCanvasElement,
-        event: &PointerEvent,
-    ) {
-        self.app
-            .extend_stroke(peer, render::pointer_pos(canvas, event));
+    pub(crate) fn pointer_move(&mut self, canvas: &HtmlCanvasElement, event: &PointerEvent) {
+        self.app.extend_stroke(render::pointer_pos(canvas, event));
     }
 
-    pub(crate) fn pointer_up(&mut self, peer: Peer) {
-        let events = self.app.end_stroke(peer);
-        self.handle_events(events);
+    pub(crate) fn pointer_up(&mut self) {
+        let events = self.app.end_stroke();
+        self.send_events(events);
     }
 
-    pub(crate) fn pointer_cancel(&mut self, peer: Peer) {
-        self.app.cancel_stroke(peer);
+    pub(crate) fn pointer_cancel(&mut self) {
+        self.app.cancel_stroke();
     }
 
-    pub(crate) fn set_network_delay(&mut self, delay: u32) {
-        self.app.set_network_delay(delay);
-        let label = if delay == 0 {
-            "0ms (instant)".to_string()
-        } else {
-            format!("{}ms", delay)
-        };
-        set_text("delay-label", &label);
+    pub(crate) fn undo(&mut self) {
+        let events = self.app.undo();
+        self.send_events(events);
     }
 
-    pub(crate) fn toggle_disconnect(&mut self) {
-        self.app.toggle_disconnect();
-        ui::update_network_controls(&self.app);
+    fn handle_open(&mut self) {
+        self.app.set_connected(true);
+        let events = self.app.hello_frame();
+        self.send_events(events);
     }
 
-    pub(crate) fn reconnect_and_sync(&mut self) {
-        self.app.reconnect_and_sync();
-        ui::update_network_controls(&self.app);
-        ui::render_log(&self.app);
+    fn handle_frame(&mut self, bytes: &[u8]) {
+        self.app.receive_frame(bytes);
     }
 
-    pub(crate) fn undo(&mut self, peer: Peer) {
-        let events = self.app.undo(peer);
-        self.handle_events(events);
+    fn handle_close(&mut self) {
+        self.app.set_connected(false);
+        self.ws = None;
     }
 
-    pub(crate) fn clear_all(&mut self) {
-        let events = self.app.clear_all();
-        self.handle_events(events);
-        ui::render_log(&self.app);
-    }
-
-    fn handle_events(&mut self, events: Vec<AppEvent>) {
+    fn send_events(&mut self, events: Vec<ClientEvent>) {
         for event in events {
             match event {
-                AppEvent::PacketCreated {
-                    id,
-                    direction,
-                    bytes,
-                } => {
-                    self.app.set_packet_start_time(id, now());
-                    if let Ok(el) = render::make_packet_el(id, direction, bytes) {
-                        self.packet_elements.insert(id, el);
-                    }
-                }
-                AppEvent::PacketDelivered { id } => {
-                    if let Some(el) = self.packet_elements.remove(&id) {
-                        el.remove();
-                    }
-                }
-                AppEvent::ClearPackets => {
-                    for (_, el) in std::mem::take(&mut self.packet_elements) {
-                        el.remove();
+                ClientEvent::SendFrame(frame) => {
+                    if let Some(ws) = &self.ws {
+                        let _ = ws.send_with_u8_array(&frame);
                     }
                 }
             }
         }
     }
+}
+
+fn read_blob_frame(app: Rc<RefCell<BrowserApp>>, blob: Blob) {
+    let Ok(reader) = FileReader::new() else {
+        return;
+    };
+    let reader_for_load = reader.clone();
+    let onload = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |_| {
+        let Ok(result) = reader_for_load.result() else {
+            return;
+        };
+        if let Ok(buffer) = result.dyn_into::<ArrayBuffer>() {
+            let bytes = Uint8Array::new(&buffer).to_vec();
+            app.borrow_mut().handle_frame(&bytes);
+        }
+    }));
+    reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+    onload.forget();
+    let _ = reader.read_as_array_buffer(&blob);
 }

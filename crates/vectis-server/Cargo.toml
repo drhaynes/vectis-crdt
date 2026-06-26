@@ -1,5 +1,5 @@
 [package]
-name = "app-core"
+name = "vectis-server"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -10,5 +10,9 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 vectis-crdt = { path = "../vectis-crdt", default-features = false }
 vectis-protocol = { path = "../vectis-protocol" }

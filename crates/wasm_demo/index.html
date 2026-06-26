@@ -3,27 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>vectis-crdt &mdash; Rust/Wasm Demo</title>
+<title>vectis-crdt client/server demo</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:       #0d0d14;
-  --panel:    #13131e;
-  --panel2:   #1a1a2e;
-  --border:   #252538;
-  --alice:    #a78bfa;
-  --bob:      #60a5fa;
-  --text:     #e2e8f0;
-  --muted:    #64748b;
-  --green:    #34d399;
-  --red:      #f87171;
-  --yellow:   #fbbf24;
-  --font:     'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --bg: #0d0d14;
+  --panel: #13131e;
+  --panel2: #1a1a2e;
+  --border: #252538;
+  --accent: #a78bfa;
+  --accent2: #60a5fa;
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --green: #34d399;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --font: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
 body {
-  background: var(--bg);
+  background: radial-gradient(circle at 50% -20%, #1b1730 0, var(--bg) 42%);
   color: var(--text);
   font-family: var(--font);
   font-size: 13px;
@@ -37,46 +37,37 @@ body {
 
 header { text-align: center; margin-bottom: 4px; }
 header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
-header h1 em { color: var(--alice); font-style: normal; }
+header h1 em { color: var(--accent); font-style: normal; }
 header p { color: var(--muted); margin-top: 5px; font-size: 11px; }
 
-.layout {
-  display: flex;
-  gap: 0;
-  align-items: stretch;
+.canvas-panel, .controls, .inspector > section {
   width: 100%;
-  max-width: 1020px;
-}
-
-.peer-panel {
-  flex: 1;
-  background: var(--panel);
+  max-width: 980px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
 }
 
-.peer-header {
+.panel-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--accent);
+  font-weight: 700;
 }
-.peer-header.alice { color: var(--alice); }
-.peer-header.bob   { color: var(--bob); }
 
-.peer-dot {
+.status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--red);
   flex-shrink: 0;
 }
+.status-dot.connecting { background: var(--yellow); }
+.status-dot.ready { background: var(--green); }
 
 .badge {
   margin-left: auto;
@@ -94,80 +85,8 @@ canvas {
   touch-action: none;
   background: #07070e;
   width: 100%;
-  flex: 1;
+  height: min(62vh, 560px);
 }
-
-.net-panel {
-  width: 150px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  padding: 8px 0;
-}
-
-.wire-line {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent 0%, var(--border) 15%, var(--border) 85%, transparent 100%);
-  transform: translateY(-50%);
-}
-
-.packets-area {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.packet {
-  position: absolute;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 8px;
-  font-weight: 700;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: none;
-  will-change: left;
-}
-.packet.from-alice { background: var(--alice); color: #1a0a2e; box-shadow: 0 0 14px var(--alice); }
-.packet.from-bob   { background: var(--bob); color: #0a1a2e; box-shadow: 0 0 14px var(--bob); }
-
-.net-info {
-  position: absolute;
-  bottom: 8px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 10px;
-}
-
-.net-status {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--green);
-  flex-shrink: 0;
-}
-.status-dot.off { background: var(--red); }
 
 .controls {
   display: flex;
@@ -175,58 +94,33 @@ canvas {
   gap: 10px;
   flex-wrap: wrap;
   padding: 10px 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  width: 100%;
-  max-width: 1020px;
 }
-
-.controls label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
-input[type="range"] { width: 110px; accent-color: var(--alice); cursor: pointer; }
 
 .btn {
-  padding: 5px 12px;
+  padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--panel2);
   color: var(--text);
   font-family: var(--font);
   font-size: 11px;
   cursor: pointer;
-  transition: border-color .15s, background .15s, color .15s;
   white-space: nowrap;
 }
-.btn:hover:not(:disabled) { border-color: var(--alice); }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
 .btn:disabled { opacity: .4; cursor: default; }
-.btn.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
-.btn.active { border-color: var(--red); color: var(--red); }
 
-.sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+.hint { color: var(--muted); font-size: 10px; margin-left: auto; }
 
 .inspector {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   width: 100%;
-  max-width: 1020px;
+  max-width: 980px;
 }
 
-.stats-box, .wire-box {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  overflow: hidden;
-}
+.stats-box, .wire-box { padding: 12px 14px; }
 .stats-box h4, .wire-box h4 {
   font-size: 10px;
   color: var(--muted);
@@ -235,136 +129,76 @@ input[type="range"] { width: 110px; accent-color: var(--alice); cursor: pointer;
   margin-bottom: 10px;
 }
 
-.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.peer-stats { display: flex; flex-direction: column; gap: 6px; }
-.peer-stats-label { font-size: 10px; font-weight: 600; margin-bottom: 2px; }
-.peer-stats-label.alice { color: var(--alice); }
-.peer-stats-label.bob { color: var(--bob); }
-.stat-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
-.stat-row span:last-child { color: var(--text); font-weight: 600; }
-
-.totals {
-  border-top: 1px solid var(--border);
-  margin-top: 10px;
-  padding-top: 10px;
-  display: flex;
-  gap: 16px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.totals span:last-child { color: var(--yellow); }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; }
+.stat-row { display: flex; justify-content: space-between; gap: 14px; font-size: 11px; color: var(--muted); }
+.stat-row span:last-child { color: var(--text); font-weight: 600; text-align: right; }
 
 .log-entry {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 10px;
-  padding: 3px 0;
+  padding: 4px 0;
   border-bottom: 1px solid #1a1a28;
 }
 .log-entry:last-child { border-bottom: none; }
-.log-dir { font-weight: 700; flex-shrink: 0; font-size: 10px; }
-.log-dir.ab { color: var(--alice); }
-.log-dir.ba { color: var(--bob); }
+.log-dir { font-weight: 700; width: 28px; flex-shrink: 0; }
+.log-dir.out { color: var(--accent); }
+.log-dir.in { color: var(--accent2); }
+.log-kind { color: var(--yellow); width: 58px; flex-shrink: 0; }
 .log-hex { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-bytes { color: var(--yellow); flex-shrink: 0; }
-.log-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; }
-.log-tag.inflight { background: #2a2510; color: var(--yellow); }
-.log-tag.delivered { background: #0f2a1a; color: var(--green); }
-.log-tag.queued { background: #2a1010; color: var(--red); }
 
-.hint { color: var(--muted); font-size: 10px; opacity: .6; text-align: center; }
+@media (max-width: 760px) {
+  body { padding: 14px 10px 24px; }
+  .inspector { grid-template-columns: 1fr; }
+  .hint { width: 100%; margin-left: 0; }
+  canvas { height: 58vh; }
+}
 </style>
 </head>
 <body>
 
 <header>
-  <h1><em>vectis-crdt</em> &mdash; Rust/Wasm Demo</h1>
-  <p>Two independent CRDT peers &bull; Rust-owned app state &bull; Canvas2D rendering from Wasm</p>
+  <h1><em>vectis-crdt</em> client/server demo</h1>
+  <p>Open this page in two tabs with the same URL hash, for example <code>#demo</code></p>
 </header>
 
-<div class="layout">
-  <div class="peer-panel">
-    <div class="peer-header alice">
-      <span class="peer-dot"></span>
-      Alice
-      <span class="badge" id="badge-alice">0 strokes</span>
-    </div>
-    <canvas id="canvas-alice" width="430" height="320"></canvas>
+<main class="canvas-panel">
+  <div class="panel-header">
+    <span class="status-dot" id="status-dot"></span>
+    Room <span id="room-id">demo</span>
+    <span class="badge" id="badge-main">0 strokes</span>
   </div>
-
-  <div class="net-panel">
-    <div class="wire-line"></div>
-    <div class="packets-area" id="packets-area"></div>
-    <div class="net-info">
-      <div id="delay-net-label" style="color:var(--muted);font-size:10px;">500ms</div>
-      <div class="net-status">
-        <span class="status-dot" id="status-dot"></span>
-        <span id="status-text" style="font-size:10px;">connected</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="peer-panel">
-    <div class="peer-header bob">
-      <span class="peer-dot"></span>
-      Bob
-      <span class="badge" id="badge-bob">0 strokes</span>
-    </div>
-    <canvas id="canvas-bob" width="430" height="320"></canvas>
-  </div>
-</div>
+  <canvas id="canvas-main" width="960" height="560"></canvas>
+</main>
 
 <div class="controls">
-  <label>
-    Latency
-    <input type="range" id="delay-slider" min="0" max="3000" step="50" value="500">
-    <span id="delay-label" style="color:var(--text);min-width:55px;">500ms</span>
-  </label>
-  <div class="sep"></div>
-  <button class="btn" id="btn-disconnect">Disconnect</button>
-  <button class="btn" id="btn-sync" disabled>Sync now</button>
-  <div class="sep"></div>
-  <button class="btn" id="btn-undo-alice">Undo Alice</button>
-  <button class="btn" id="btn-undo-bob">Undo Bob</button>
-  <div class="sep"></div>
-  <button class="btn danger" id="btn-clear">Clear all</button>
+  <button class="btn" id="btn-reconnect">Reconnect</button>
+  <button class="btn" id="btn-undo" disabled>Undo local stroke</button>
+  <span class="hint">Server: <code>cargo run -p vectis-server</code> · Wasm: <code>./build.sh demo</code></span>
 </div>
 
 <div class="inspector">
-  <div class="stats-box">
-    <h4>Peer state</h4>
+  <section class="stats-box">
+    <h4>Client state</h4>
     <div class="stats-grid">
-      <div class="peer-stats">
-        <div class="peer-stats-label alice">Alice</div>
-        <div class="stat-row"><span>visible strokes</span><span id="alice-visible">0</span></div>
-        <div class="stat-row"><span>queued out</span><span id="alice-queue">0</span></div>
-        <div class="stat-row"><span>undo depth</span><span id="alice-undo">0</span></div>
-        <div class="stat-row"><span>bytes sent</span><span id="alice-bytes">0 B</span></div>
-      </div>
-      <div class="peer-stats">
-        <div class="peer-stats-label bob">Bob</div>
-        <div class="stat-row"><span>visible strokes</span><span id="bob-visible">0</span></div>
-        <div class="stat-row"><span>queued out</span><span id="bob-queue">0</span></div>
-        <div class="stat-row"><span>undo depth</span><span id="bob-undo">0</span></div>
-        <div class="stat-row"><span>bytes sent</span><span id="bob-bytes">0 B</span></div>
-      </div>
+      <div class="stat-row"><span>status</span><span id="status-text">connecting</span></div>
+      <div class="stat-row"><span>actor</span><span id="actor-id">pending</span></div>
+      <div class="stat-row"><span>visible strokes</span><span id="visible-strokes">0</span></div>
+      <div class="stat-row"><span>undo depth</span><span id="undo-depth">0</span></div>
+      <div class="stat-row"><span>frames sent</span><span id="frames-sent">0</span></div>
+      <div class="stat-row"><span>frames received</span><span id="frames-received">0</span></div>
+      <div class="stat-row"><span>bytes sent</span><span id="bytes-sent">0 B</span></div>
+      <div class="stat-row"><span>bytes received</span><span id="bytes-received">0 B</span></div>
     </div>
-    <div class="totals">
-      <span>total packets:</span>
-      <span id="total-packets">0</span>
-      <span style="margin-left:auto;">total wire:</span>
-      <span id="total-bytes">0 B</span>
-    </div>
-  </div>
+  </section>
 
-  <div class="wire-box">
-    <h4>Wire log <span style="color:var(--muted);font-weight:400;font-size:9px;">(binary frames)</span></h4>
+  <section class="wire-box">
+    <h4>Wire log <span style="color:var(--muted);font-weight:400;font-size:9px;">(WebSocket binary frames)</span></h4>
     <div id="wire-log-entries"></div>
-  </div>
+  </section>
 </div>
-
-<p class="hint">Try: disconnect, draw on both, Sync now, watch convergence</p>
 
 <script type="module">
 import init from './pkg/wasm_demo.js';
@@ -372,8 +206,8 @@ import init from './pkg/wasm_demo.js';
 init().catch(err => {
   document.body.innerHTML = `<div style="color:#f87171;padding:40px;font-family:monospace">
     <strong>Error loading wasm_demo:</strong><br><br>${err}<br><br>
-    From <code>crates/wasm_demo/</code>, build with <code>wasm-pack build --target web --out-dir pkg --dev</code><br>
-    then serve the repository root and open <code>http://localhost:8080/crates/wasm_demo/</code>
+    Build with <code>./build.sh demo</code>, run <code>cargo run -p vectis-server</code>,<br>
+    then serve the repository root and open <code>http://localhost:8080/crates/wasm_demo/#demo</code>
   </div>`;
 });
 </script>

@@ -8,16 +8,14 @@ pub struct StrokeView {
     pub points: Vec<AppPoint>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppStats {
-    pub alice_visible: usize,
-    pub bob_visible: usize,
-    pub alice_queued: usize,
-    pub bob_queued: usize,
-    pub alice_undo_depth: usize,
-    pub bob_undo_depth: usize,
-    pub total_packets: u32,
-    pub total_bytes: usize,
-    pub alice_bytes: usize,
-    pub bob_bytes: usize,
+    pub actor: Option<u64>,
+    pub visible_strokes: usize,
+    pub undo_depth: usize,
+    pub frames_sent: u32,
+    pub frames_received: u32,
+    pub bytes_sent: usize,
+    pub bytes_received: usize,
+    pub status: String,
 }

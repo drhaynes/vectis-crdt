@@ -1,21 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use app_core::Peer;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
-use web_sys::{Event, HtmlButtonElement, HtmlCanvasElement, HtmlInputElement, PointerEvent};
+use web_sys::{Event, HtmlButtonElement, HtmlCanvasElement, PointerEvent};
 
 use crate::browser_app::BrowserApp;
 use crate::dom::{element_by_id, request_animation_frame};
 
-pub(crate) fn bind_canvas(
-    app: &Rc<RefCell<BrowserApp>>,
-    id: &str,
-    peer: Peer,
-    color: u32,
-) -> Result<(), JsValue> {
+pub(crate) fn bind_canvas(app: &Rc<RefCell<BrowserApp>>, id: &str) -> Result<(), JsValue> {
     let canvas = element_by_id::<HtmlCanvasElement>(id)?;
 
     {
@@ -25,8 +19,7 @@ pub(crate) fn bind_canvas(
             Closure::<dyn FnMut(PointerEvent)>::wrap(Box::new(move |event: PointerEvent| {
                 event.prevent_default();
                 let _ = canvas_for_handler.set_pointer_capture(event.pointer_id());
-                app.borrow_mut()
-                    .pointer_down(peer, &canvas_for_handler, &event, color);
+                app.borrow_mut().pointer_down(&canvas_for_handler, &event);
             }));
         canvas.add_event_listener_with_callback("pointerdown", handler.as_ref().unchecked_ref())?;
         handler.forget();
@@ -38,8 +31,7 @@ pub(crate) fn bind_canvas(
         let handler =
             Closure::<dyn FnMut(PointerEvent)>::wrap(Box::new(move |event: PointerEvent| {
                 event.prevent_default();
-                app.borrow_mut()
-                    .pointer_move(peer, &canvas_for_handler, &event);
+                app.borrow_mut().pointer_move(&canvas_for_handler, &event);
             }));
         canvas.add_event_listener_with_callback("pointermove", handler.as_ref().unchecked_ref())?;
         handler.forget();
@@ -50,7 +42,7 @@ pub(crate) fn bind_canvas(
         let handler =
             Closure::<dyn FnMut(PointerEvent)>::wrap(Box::new(move |event: PointerEvent| {
                 event.prevent_default();
-                app.borrow_mut().pointer_up(peer);
+                app.borrow_mut().pointer_up();
             }));
         canvas.add_event_listener_with_callback("pointerup", handler.as_ref().unchecked_ref())?;
         handler.forget();
@@ -60,7 +52,7 @@ pub(crate) fn bind_canvas(
         let app = Rc::clone(app);
         let handler = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |event: Event| {
             event.prevent_default();
-            app.borrow_mut().pointer_cancel(peer);
+            app.borrow_mut().pointer_cancel();
         }));
         canvas
             .add_event_listener_with_callback("pointercancel", handler.as_ref().unchecked_ref())?;
@@ -71,32 +63,22 @@ pub(crate) fn bind_canvas(
 }
 
 pub(crate) fn bind_controls(app: &Rc<RefCell<BrowserApp>>) -> Result<(), JsValue> {
+    bind_button(app, "btn-undo", |app| app.undo())?;
+
     {
-        let slider = element_by_id::<HtmlInputElement>("delay-slider")?;
-        let slider_for_handler = slider.clone();
+        let button = element_by_id::<HtmlButtonElement>("btn-reconnect")?;
         let app = Rc::clone(app);
         let handler = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |_| {
-            let delay = slider_for_handler.value().parse::<u32>().unwrap_or(500);
-            app.borrow_mut().set_network_delay(delay);
+            let _ = BrowserApp::connect(&app);
         }));
-        slider.add_event_listener_with_callback("input", handler.as_ref().unchecked_ref())?;
+        button.add_event_listener_with_callback("click", handler.as_ref().unchecked_ref())?;
         handler.forget();
     }
-
-    bind_button(app, "btn-disconnect", |app| app.toggle_disconnect())?;
-    bind_button(app, "btn-sync", |app| app.reconnect_and_sync())?;
-    bind_button(app, "btn-undo-alice", |app| app.undo(Peer::Alice))?;
-    bind_button(app, "btn-undo-bob", |app| app.undo(Peer::Bob))?;
-    bind_button(app, "btn-clear", |app| app.clear_all())?;
 
     Ok(())
 }
 
-pub(crate) fn bind_button<F>(
-    app: &Rc<RefCell<BrowserApp>>,
-    id: &str,
-    mut f: F,
-) -> Result<(), JsValue>
+fn bind_button<F>(app: &Rc<RefCell<BrowserApp>>, id: &str, mut f: F) -> Result<(), JsValue>
 where
     F: 'static + FnMut(&mut BrowserApp),
 {
