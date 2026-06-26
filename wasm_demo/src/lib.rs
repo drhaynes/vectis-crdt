@@ -6,9 +6,9 @@ use vectis_crdt::document::Document;
 use vectis_crdt::encoding::{decode_update, encode_update};
 use vectis_crdt::stroke::{StrokeData, StrokePoint, StrokeProperties, ToolKind};
 use vectis_crdt::types::{ActorId, OpId};
+use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 use web_sys::{
     CanvasRenderingContext2d, Document as DomDocument, Event, HtmlButtonElement, HtmlCanvasElement,
     HtmlElement, HtmlInputElement, PointerEvent, Window,
@@ -186,11 +186,10 @@ impl DemoApp {
             Peer::Bob => self.live_bob.take(),
         };
 
-        if let Some(stroke) = stroke {
-            if stroke.points.len() >= 2 {
+        if let Some(stroke) = stroke
+            && stroke.points.len() >= 2 {
                 self.commit(peer, stroke);
             }
-        }
     }
 
     fn pointer_cancel(&mut self, peer: Peer) {
@@ -722,11 +721,10 @@ where
 }
 
 fn set_text(id: &str, text: &str) {
-    if let Ok(el) = element_by_id::<HtmlElement>(id) {
-        if el.text_content().as_deref() != Some(text) {
+    if let Ok(el) = element_by_id::<HtmlElement>(id)
+        && el.text_content().as_deref() != Some(text) {
             el.set_text_content(Some(text));
         }
-    }
 }
 
 fn element_width(id: &str) -> Option<f64> {

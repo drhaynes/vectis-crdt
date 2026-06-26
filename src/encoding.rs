@@ -22,8 +22,8 @@
 //!   0x03 = String
 
 use crate::document::{
-    MetadataKey, MetadataValue, Operation, PropertyUpdate, MAX_ACTORS, MAX_POINTS_PER_STROKE,
-    MAX_STROKES,
+    MAX_ACTORS, MAX_POINTS_PER_STROKE, MAX_STROKES, MetadataKey, MetadataValue, Operation,
+    PropertyUpdate,
 };
 use crate::error::VectisError;
 use crate::error::VectisResult;
@@ -550,7 +550,7 @@ pub fn decode_update(bytes: &[u8]) -> VectisResult<Vec<Operation>> {
                     i + 1,
                     count,
                     cursor
-                )))
+                )));
             }
         }
     }
