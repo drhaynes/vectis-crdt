@@ -1,5 +1,5 @@
 [package]
-name = "app-core"
+name = "vectis-protocol"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -11,4 +11,3 @@ publish = false
 
 [dependencies]
 vectis-crdt = { path = "../vectis-crdt", default-features = false }
-vectis-protocol = { path = "../vectis-protocol" }

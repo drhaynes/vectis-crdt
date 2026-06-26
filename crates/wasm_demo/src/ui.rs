@@ -1,106 +1,68 @@
-use app_core::{DemoApp, Direction, PacketStatus};
+use app_core::{ClientApp, Direction};
 use web_sys::{HtmlButtonElement, HtmlElement};
 
 use crate::dom::{element_by_id, set_text};
 
-pub(crate) fn update_stats(app: &DemoApp) {
+pub(crate) fn update_stats(app: &ClientApp) {
     let stats = app.stats();
-    let network = app.network_state();
 
-    set_text("alice-visible", &stats.alice_visible.to_string());
-    set_text("alice-queue", &stats.alice_queued.to_string());
-    set_text("alice-undo", &stats.alice_undo_depth.to_string());
-    set_text("alice-bytes", &fmt_bytes(stats.alice_bytes));
-    set_text("bob-visible", &stats.bob_visible.to_string());
-    set_text("bob-queue", &stats.bob_queued.to_string());
-    set_text("bob-undo", &stats.bob_undo_depth.to_string());
-    set_text("bob-bytes", &fmt_bytes(stats.bob_bytes));
-    set_text("total-packets", &stats.total_packets.to_string());
-    set_text("total-bytes", &fmt_bytes(stats.total_bytes));
+    set_text("room-id", app.room());
     set_text(
-        "badge-alice",
+        "actor-id",
+        &stats
+            .actor
+            .map(|actor| actor.to_string())
+            .unwrap_or_else(|| "pending".to_string()),
+    );
+    set_text("visible-strokes", &stats.visible_strokes.to_string());
+    set_text("undo-depth", &stats.undo_depth.to_string());
+    set_text("frames-sent", &stats.frames_sent.to_string());
+    set_text("frames-received", &stats.frames_received.to_string());
+    set_text("bytes-sent", &fmt_bytes(stats.bytes_sent));
+    set_text("bytes-received", &fmt_bytes(stats.bytes_received));
+    set_text("status-text", &stats.status);
+    set_text(
+        "badge-main",
         &format!(
             "{} stroke{}",
-            stats.alice_visible,
-            if stats.alice_visible == 1 { "" } else { "s" }
+            stats.visible_strokes,
+            if stats.visible_strokes == 1 { "" } else { "s" }
         ),
     );
-    set_text(
-        "badge-bob",
-        &format!(
-            "{} stroke{}",
-            stats.bob_visible,
-            if stats.bob_visible == 1 { "" } else { "s" }
-        ),
-    );
-    let label = if network.delay_ms == 0 {
-        "instant".to_string()
-    } else {
-        format!("{}ms", network.delay_ms)
-    };
-    set_text("delay-net-label", &label);
 }
 
-pub(crate) fn update_network_controls(app: &DemoApp) {
-    let network = app.network_state();
-    if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-disconnect") {
-        btn.set_text_content(Some(if network.disconnected {
-            "Reconnect"
-        } else {
-            "Disconnect"
-        }));
-        btn.set_class_name(if network.disconnected {
-            "btn active"
-        } else {
-            "btn"
-        });
-    }
-    if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-sync") {
-        btn.set_disabled(!network.disconnected);
+pub(crate) fn update_controls(app: &ClientApp) {
+    let state = app.connection_state();
+    if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-undo") {
+        btn.set_disabled(!state.loaded);
     }
     if let Ok(dot) = element_by_id::<HtmlElement>("status-dot") {
-        dot.set_class_name(if network.disconnected {
-            "status-dot off"
+        dot.set_class_name(if state.connected && state.loaded {
+            "status-dot ready"
+        } else if state.connected {
+            "status-dot connecting"
         } else {
-            "status-dot"
+            "status-dot off"
         });
     }
-    set_text(
-        "status-text",
-        if network.disconnected {
-            "disconnected"
-        } else {
-            "connected"
-        },
-    );
 }
 
-pub(crate) fn render_log(app: &DemoApp) {
+pub(crate) fn render_log(app: &ClientApp) {
     let html = app
         .wire_log()
         .iter()
         .map(|entry| {
             let dir_class = match entry.direction {
-                Direction::AliceToBob => "ab",
-                Direction::BobToAlice => "ba",
+                Direction::Outbound => "out",
+                Direction::Inbound => "in",
             };
             let dir_label = match entry.direction {
-                Direction::AliceToBob => "A-&gt;B",
-                Direction::BobToAlice => "B-&gt;A",
-            };
-            let status_class = match entry.status {
-                PacketStatus::Inflight => "inflight",
-                PacketStatus::Delivered => "delivered",
-                PacketStatus::Queued => "queued",
-            };
-            let status_label = match entry.status {
-                PacketStatus::Inflight => "in-flight",
-                PacketStatus::Delivered => "delivered",
-                PacketStatus::Queued => "queued",
+                Direction::Outbound => "out",
+                Direction::Inbound => "in",
             };
             format!(
-                "<div class=\"log-entry\"><span class=\"log-dir {dir_class}\">{dir_label}</span><span class=\"log-hex\">{} ...</span><span class=\"log-bytes\">{}B</span><span class=\"log-tag {status_class}\">{status_label}</span></div>",
-                entry.hex, entry.bytes,
+                "<div class=\"log-entry\"><span class=\"log-dir {dir_class}\">{dir_label}</span><span class=\"log-kind\">{}</span><span class=\"log-hex\">{} ...</span><span class=\"log-bytes\">{}B</span></div>",
+                entry.kind, entry.hex, entry.bytes,
             )
         })
         .collect::<String>();

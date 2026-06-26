@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 app-core = { path = "../app-core" }
 console_error_panic_hook = "0.1"
+js-sys = "0.3"
 wasm-bindgen = "0.2"
 
 [dependencies.web-sys]
@@ -25,8 +26,13 @@ features = [
   "HtmlCanvasElement",
   "HtmlElement",
   "HtmlInputElement",
+  "Location",
+  "MessageEvent",
   "Node",
   "Performance",
   "PointerEvent",
+  "FileReader",
+  "Blob",
+  "WebSocket",
   "Window",
 ]

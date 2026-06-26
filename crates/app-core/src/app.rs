@@ -1,184 +1,179 @@
 use vectis_crdt::causal_buffer::CausalBuffer;
 use vectis_crdt::document::Document;
-use vectis_crdt::encoding::{decode_update, encode_update};
+use vectis_crdt::encoding::{decode_snapshot, decode_update, encode_state_vector, encode_update};
 use vectis_crdt::stroke::{StrokeData, StrokeProperties, ToolKind};
 use vectis_crdt::types::{ActorId, OpId};
+use vectis_protocol::{ProtocolMessage, decode_message, encode_message};
 
-use crate::event::AppEvent;
-use crate::network::{
-    Direction, InflightPacket, MAX_LOG, NetworkState, PacketStatus, PacketView, QueuedPacket,
-    WireEntry, hex_prefix, packet_opacity, packet_progress,
-};
-use crate::peer::{ALICE_ACTOR, BOB_ACTOR, Peer};
+use crate::event::ClientEvent;
+use crate::network::{ConnectionState, Direction, MAX_LOG, WireEntry, hex_prefix};
 use crate::stroke::{AppPoint, LiveStroke, app_point_from_stroke, stroke_point_from_app};
 use crate::view::{AppStats, StrokeView};
 
-struct PeerDoc {
+const DEFAULT_COLOR: u32 = 0xa78bfaff;
+
+pub struct ClientApp {
+    room: String,
+    actor: Option<ActorId>,
+    color: u32,
     doc: Document,
     buffer: CausalBuffer,
-}
-
-impl PeerDoc {
-    fn new(actor_id: u64) -> Self {
-        Self {
-            doc: Document::new(ActorId(actor_id)),
-            buffer: CausalBuffer::new(),
-        }
-    }
-}
-
-pub struct DemoApp {
-    alice: PeerDoc,
-    bob: PeerDoc,
-    network_delay: u32,
-    disconnected: bool,
-    queued: Vec<QueuedPacket>,
-    inflight: Vec<InflightPacket>,
-    next_packet_id: u32,
-    total_packets: u32,
-    total_bytes: usize,
-    alice_bytes: usize,
-    bob_bytes: usize,
+    live: Option<LiveStroke>,
+    connected: bool,
+    loaded: bool,
+    frames_sent: u32,
+    frames_received: u32,
+    bytes_sent: usize,
+    bytes_received: usize,
     wire_log: Vec<WireEntry>,
-    live_alice: Option<LiveStroke>,
-    live_bob: Option<LiveStroke>,
+    status: String,
 }
 
-impl Default for DemoApp {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DemoApp {
-    pub fn new() -> Self {
+impl ClientApp {
+    pub fn new(room: impl Into<String>) -> Self {
         Self {
-            alice: PeerDoc::new(ALICE_ACTOR),
-            bob: PeerDoc::new(BOB_ACTOR),
-            network_delay: 500,
-            disconnected: false,
-            queued: Vec::new(),
-            inflight: Vec::new(),
-            next_packet_id: 0,
-            total_packets: 0,
-            total_bytes: 0,
-            alice_bytes: 0,
-            bob_bytes: 0,
+            room: room.into(),
+            actor: None,
+            color: DEFAULT_COLOR,
+            doc: Document::new(ActorId(0)),
+            buffer: CausalBuffer::new(),
+            live: None,
+            connected: false,
+            loaded: false,
+            frames_sent: 0,
+            frames_received: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
             wire_log: Vec::new(),
-            live_alice: None,
-            live_bob: None,
+            status: "connecting".to_string(),
         }
     }
 
-    pub fn begin_stroke(&mut self, peer: Peer, point: AppPoint, color: u32) {
-        *self.live_mut(peer) = Some(LiveStroke::new(color, point));
+    pub fn room(&self) -> &str {
+        &self.room
     }
 
-    pub fn extend_stroke(&mut self, peer: Peer, point: AppPoint) {
-        if let Some(stroke) = self.live_mut(peer) {
+    pub fn color(&self) -> u32 {
+        self.color
+    }
+
+    pub fn set_connected(&mut self, connected: bool) {
+        self.connected = connected;
+        if connected {
+            self.status = "connected".to_string();
+        } else {
+            self.loaded = false;
+            self.live = None;
+            self.status = "disconnected".to_string();
+        }
+    }
+
+    pub fn hello_frame(&mut self) -> Vec<ClientEvent> {
+        let state_vector = encode_state_vector(&self.doc.version);
+        let frame = encode_message(&ProtocolMessage::ClientHello {
+            room: self.room.clone(),
+            state_vector,
+        });
+        self.record(Direction::Outbound, "hello", &frame);
+        vec![ClientEvent::SendFrame(frame)]
+    }
+
+    pub fn receive_frame(&mut self, frame: &[u8]) {
+        self.record(Direction::Inbound, "frame", frame);
+
+        match decode_message(frame) {
+            Ok(ProtocolMessage::ServerWelcome { actor, color }) => {
+                self.actor = Some(actor);
+                self.color = color;
+                self.doc = Document::new(actor);
+                self.buffer = CausalBuffer::new();
+                self.status = format!("actor {} assigned", actor.0);
+            }
+            Ok(ProtocolMessage::Snapshot { bytes }) => {
+                let Some(actor) = self.actor else {
+                    self.status = "snapshot arrived before welcome".to_string();
+                    return;
+                };
+                match decode_snapshot(&bytes, actor) {
+                    Ok(doc) => {
+                        self.doc = doc;
+                        self.buffer = CausalBuffer::new();
+                        self.loaded = true;
+                        self.status = "ready".to_string();
+                    }
+                    Err(err) => {
+                        self.status = format!("snapshot decode failed: {err}");
+                    }
+                }
+            }
+            Ok(ProtocolMessage::Update { bytes }) => match decode_update(&bytes) {
+                Ok(ops) => {
+                    for op in ops {
+                        if let Err(err) = self.doc.apply_remote_buffered(op, &mut self.buffer) {
+                            self.status = format!("update apply failed: {err}");
+                            return;
+                        }
+                    }
+                    if self.loaded {
+                        self.status = "synced".to_string();
+                    }
+                }
+                Err(err) => {
+                    self.status = format!("update decode failed: {err}");
+                }
+            },
+            Ok(ProtocolMessage::Error { message }) => {
+                self.status = message;
+            }
+            Ok(ProtocolMessage::ClientHello { .. } | ProtocolMessage::StateVector { .. }) => {
+                self.status = "unexpected server frame".to_string();
+            }
+            Err(err) => {
+                self.status = format!("protocol decode failed: {err:?}");
+            }
+        }
+    }
+
+    pub fn begin_stroke(&mut self, point: AppPoint) {
+        if self.can_edit() {
+            self.live = Some(LiveStroke::new(self.color, point));
+        }
+    }
+
+    pub fn extend_stroke(&mut self, point: AppPoint) {
+        if let Some(stroke) = &mut self.live {
             stroke.points.push(point);
         }
     }
 
-    pub fn end_stroke(&mut self, peer: Peer) -> Vec<AppEvent> {
-        let stroke = self.live_mut(peer).take();
+    pub fn end_stroke(&mut self) -> Vec<ClientEvent> {
+        let stroke = self.live.take();
         if let Some(stroke) = stroke
             && stroke.points.len() >= 2
         {
-            return self.commit(peer, stroke);
+            return self.commit(stroke);
         }
         Vec::new()
     }
 
-    pub fn cancel_stroke(&mut self, peer: Peer) {
-        *self.live_mut(peer) = None;
+    pub fn cancel_stroke(&mut self) {
+        self.live = None;
     }
 
-    pub fn set_network_delay(&mut self, delay_ms: u32) {
-        self.network_delay = delay_ms;
-    }
-
-    pub fn toggle_disconnect(&mut self) {
-        self.disconnected = !self.disconnected;
-    }
-
-    pub fn reconnect_and_sync(&mut self) {
-        self.disconnected = false;
-        self.sync_now();
-    }
-
-    pub fn undo(&mut self, peer: Peer) -> Vec<AppEvent> {
-        if self.peer_mut(peer).doc.undo_last_stroke().is_some() {
-            self.flush(peer)
+    pub fn undo(&mut self) -> Vec<ClientEvent> {
+        if self.can_edit() && self.doc.undo_last_stroke().is_some() {
+            self.flush()
         } else {
             Vec::new()
         }
     }
 
-    pub fn clear_all(&mut self) -> Vec<AppEvent> {
-        self.queued.clear();
-        self.inflight.clear();
-        self.total_packets = 0;
-        self.total_bytes = 0;
-        self.alice_bytes = 0;
-        self.bob_bytes = 0;
-        self.wire_log.clear();
-        self.live_alice = None;
-        self.live_bob = None;
-        self.alice = PeerDoc::new(ALICE_ACTOR);
-        self.bob = PeerDoc::new(BOB_ACTOR);
-        vec![AppEvent::ClearPackets]
-    }
-
-    pub fn tick(&mut self, now_ms: f64) -> Vec<AppEvent> {
-        let mut delivered = Vec::new();
-        for (idx, packet) in self.inflight.iter().enumerate() {
-            if packet_progress(packet, now_ms) >= 1.0 {
-                delivered.push(idx);
-            }
-        }
-
-        let mut events = Vec::new();
-        for idx in delivered.into_iter().rev() {
-            let packet = self.inflight.remove(idx);
-            self.apply_to_target(packet.direction, &packet.payload);
-            self.total_packets += 1;
-            self.mark_log(packet.id, PacketStatus::Delivered);
-            events.push(AppEvent::PacketDelivered { id: packet.id });
-        }
-        events
-    }
-
-    pub fn packet_views(&self, now_ms: f64) -> Vec<PacketView> {
-        self.inflight
-            .iter()
-            .map(|packet| {
-                let progress = packet_progress(packet, now_ms);
-                PacketView {
-                    id: packet.id,
-                    direction: packet.direction,
-                    bytes: packet.bytes,
-                    progress,
-                    opacity: packet_opacity(progress),
-                }
-            })
-            .collect()
-    }
-
-    pub fn set_packet_start_time(&mut self, id: u32, start_time: f64) {
-        if let Some(packet) = self.inflight.iter_mut().find(|packet| packet.id == id) {
-            packet.start_time = start_time;
-        }
-    }
-
-    pub fn strokes(&self, peer: Peer) -> Vec<StrokeView> {
-        let peer_doc = self.peer(peer);
-        peer_doc
-            .doc
+    pub fn strokes(&self) -> Vec<StrokeView> {
+        self.doc
             .visible_stroke_ids()
             .into_iter()
             .filter_map(|id| {
-                let (data, props) = peer_doc.doc.get_stroke(&id)?;
+                let (data, props) = self.doc.get_stroke(&id)?;
                 Some(StrokeView {
                     color: props.color.value,
                     width: props.stroke_width.value,
@@ -189,8 +184,8 @@ impl DemoApp {
             .collect()
     }
 
-    pub fn live_stroke(&self, peer: Peer) -> Option<StrokeView> {
-        self.live(peer).as_ref().map(|stroke| StrokeView {
+    pub fn live_stroke(&self) -> Option<StrokeView> {
+        self.live.as_ref().map(|stroke| StrokeView {
             color: stroke.color,
             width: 3.0,
             opacity: 0.65,
@@ -200,31 +195,21 @@ impl DemoApp {
 
     pub fn stats(&self) -> AppStats {
         AppStats {
-            alice_visible: self.alice.doc.visible_stroke_ids().len(),
-            bob_visible: self.bob.doc.visible_stroke_ids().len(),
-            alice_queued: self
-                .queued
-                .iter()
-                .filter(|p| p.direction == Direction::AliceToBob)
-                .count(),
-            bob_queued: self
-                .queued
-                .iter()
-                .filter(|p| p.direction == Direction::BobToAlice)
-                .count(),
-            alice_undo_depth: self.alice.doc.undo_depth(),
-            bob_undo_depth: self.bob.doc.undo_depth(),
-            total_packets: self.total_packets,
-            total_bytes: self.total_bytes,
-            alice_bytes: self.alice_bytes,
-            bob_bytes: self.bob_bytes,
+            actor: self.actor.map(|actor| actor.0),
+            visible_strokes: self.doc.visible_stroke_ids().len(),
+            undo_depth: self.doc.undo_depth(),
+            frames_sent: self.frames_sent,
+            frames_received: self.frames_received,
+            bytes_sent: self.bytes_sent,
+            bytes_received: self.bytes_received,
+            status: self.status.clone(),
         }
     }
 
-    pub fn network_state(&self) -> NetworkState {
-        NetworkState {
-            delay_ms: self.network_delay,
-            disconnected: self.disconnected,
+    pub fn connection_state(&self) -> ConnectionState {
+        ConnectionState {
+            connected: self.connected,
+            loaded: self.loaded,
         }
     }
 
@@ -232,7 +217,14 @@ impl DemoApp {
         &self.wire_log
     }
 
-    fn commit(&mut self, peer: Peer, stroke: LiveStroke) -> Vec<AppEvent> {
+    fn can_edit(&self) -> bool {
+        self.connected && self.loaded && self.actor.is_some()
+    }
+
+    fn commit(&mut self, stroke: LiveStroke) -> Vec<ClientEvent> {
+        if !self.can_edit() {
+            return Vec::new();
+        }
         let points = stroke
             .points
             .iter()
@@ -241,139 +233,44 @@ impl DemoApp {
             .into_boxed_slice();
         let data = StrokeData::new(points, ToolKind::Pen);
         let props = StrokeProperties::new(stroke.color, 3.0, 1.0, OpId::ZERO);
-        self.peer_mut(peer).doc.insert_stroke(data, props);
-        self.flush(peer)
+        self.doc.insert_stroke(data, props);
+        self.flush()
     }
 
-    fn flush(&mut self, peer: Peer) -> Vec<AppEvent> {
-        let ops = self.peer_mut(peer).doc.take_pending_ops();
+    fn flush(&mut self) -> Vec<ClientEvent> {
+        let ops = self.doc.take_pending_ops();
         if ops.is_empty() {
             return Vec::new();
         }
-        self.send_packet(peer, encode_update(&ops))
+        let update = encode_update(&ops);
+        let frame = encode_message(&ProtocolMessage::Update { bytes: update });
+        self.record(Direction::Outbound, "update", &frame);
+        vec![ClientEvent::SendFrame(frame)]
     }
 
-    fn send_packet(&mut self, from_peer: Peer, payload: Vec<u8>) -> Vec<AppEvent> {
-        let direction = match from_peer {
-            Peer::Alice => Direction::AliceToBob,
-            Peer::Bob => Direction::BobToAlice,
-        };
-        let hex = hex_prefix(&payload);
-        let bytes = payload.len();
-
-        self.total_bytes += bytes;
-        match from_peer {
-            Peer::Alice => self.alice_bytes += bytes,
-            Peer::Bob => self.bob_bytes += bytes,
-        }
-
-        if self.disconnected {
-            self.queued.push(QueuedPacket { direction, payload });
-            self.log_entry(direction, bytes, hex, PacketStatus::Queued, None);
-            return Vec::new();
-        }
-
-        self.next_packet_id += 1;
-        let id = self.next_packet_id;
-        let duration = f64::from(self.network_delay.max(30));
-        self.log_entry(direction, bytes, hex, PacketStatus::Inflight, Some(id));
-        self.inflight.push(InflightPacket {
-            id,
-            start_time: 0.0,
-            duration,
-            direction,
-            payload,
-            bytes,
-        });
-
-        vec![AppEvent::PacketCreated {
-            id,
-            direction,
-            bytes,
-        }]
-    }
-
-    fn sync_now(&mut self) {
-        let queued = std::mem::take(&mut self.queued);
-        for packet in queued {
-            self.apply_to_target(packet.direction, &packet.payload);
-            self.total_packets += 1;
-        }
-
-        for entry in &mut self.wire_log {
-            if entry.status == PacketStatus::Queued {
-                entry.status = PacketStatus::Delivered;
+    fn record(&mut self, direction: Direction, kind: &'static str, frame: &[u8]) {
+        match direction {
+            Direction::Outbound => {
+                self.frames_sent += 1;
+                self.bytes_sent += frame.len();
+            }
+            Direction::Inbound => {
+                self.frames_received += 1;
+                self.bytes_received += frame.len();
             }
         }
-    }
 
-    fn apply_to_target(&mut self, direction: Direction, payload: &[u8]) {
-        let peer = match direction {
-            Direction::AliceToBob => &mut self.bob,
-            Direction::BobToAlice => &mut self.alice,
-        };
-
-        if let Ok(ops) = decode_update(payload) {
-            for op in ops {
-                let _ = peer.doc.apply_remote_buffered(op, &mut peer.buffer);
-            }
-        }
-    }
-
-    fn log_entry(
-        &mut self,
-        direction: Direction,
-        bytes: usize,
-        hex: String,
-        status: PacketStatus,
-        id: Option<u32>,
-    ) {
         self.wire_log.insert(
             0,
             WireEntry {
-                id,
                 direction,
-                bytes,
-                hex,
-                status,
+                kind,
+                bytes: frame.len(),
+                hex: hex_prefix(frame),
             },
         );
         if self.wire_log.len() > MAX_LOG {
             self.wire_log.pop();
-        }
-    }
-
-    fn mark_log(&mut self, id: u32, status: PacketStatus) {
-        if let Some(entry) = self.wire_log.iter_mut().find(|entry| entry.id == Some(id)) {
-            entry.status = status;
-        }
-    }
-
-    fn peer(&self, peer: Peer) -> &PeerDoc {
-        match peer {
-            Peer::Alice => &self.alice,
-            Peer::Bob => &self.bob,
-        }
-    }
-
-    fn peer_mut(&mut self, peer: Peer) -> &mut PeerDoc {
-        match peer {
-            Peer::Alice => &mut self.alice,
-            Peer::Bob => &mut self.bob,
-        }
-    }
-
-    fn live(&self, peer: Peer) -> &Option<LiveStroke> {
-        match peer {
-            Peer::Alice => &self.live_alice,
-            Peer::Bob => &self.live_bob,
-        }
-    }
-
-    fn live_mut(&mut self, peer: Peer) -> &mut Option<LiveStroke> {
-        match peer {
-            Peer::Alice => &mut self.live_alice,
-            Peer::Bob => &mut self.live_bob,
         }
     }
 }
@@ -381,74 +278,58 @@ impl DemoApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const ALICE_COLOR: u32 = 0xa78bfaff;
+    use vectis_crdt::encoding::encode_snapshot;
 
-    fn draw_stroke(app: &mut DemoApp, peer: Peer) -> Vec<AppEvent> {
-        app.begin_stroke(peer, AppPoint::new(0.0, 0.0, 1.0), ALICE_COLOR);
-        app.extend_stroke(peer, AppPoint::new(10.0, 10.0, 1.0));
-        app.end_stroke(peer)
+    fn welcome(actor: u64) -> Vec<u8> {
+        encode_message(&ProtocolMessage::ServerWelcome {
+            actor: ActorId(actor),
+            color: 0x60a5fbff,
+        })
     }
 
     #[test]
-    fn drawing_creates_inflight_packet() {
-        let mut app = DemoApp::new();
-        let events = draw_stroke(&mut app, Peer::Alice);
-        assert!(matches!(
-            events.as_slice(),
-            [AppEvent::PacketCreated { .. }]
-        ));
-        assert_eq!(app.stats().alice_visible, 1);
-        assert_eq!(app.packet_views(0.0).len(), 1);
+    fn hello_uses_configured_room() {
+        let mut app = ClientApp::new("demo-room");
+        let events = app.hello_frame();
+        let [ClientEvent::SendFrame(frame)] = events.as_slice() else {
+            panic!("expected hello frame");
+        };
+        assert_eq!(
+            decode_message(frame),
+            Ok(ProtocolMessage::ClientHello {
+                room: "demo-room".to_string(),
+                state_vector: encode_state_vector(&Document::new(ActorId(0)).version),
+            })
+        );
     }
 
     #[test]
-    fn disconnected_draw_queues_packet() {
-        let mut app = DemoApp::new();
-        app.toggle_disconnect();
-        let events = draw_stroke(&mut app, Peer::Alice);
-        assert!(events.is_empty());
-        assert_eq!(app.stats().alice_queued, 1);
-        assert_eq!(app.wire_log()[0].status, PacketStatus::Queued);
+    fn snapshot_makes_client_ready() {
+        let mut app = ClientApp::new("demo");
+        app.set_connected(true);
+        app.receive_frame(&welcome(7));
+        let snapshot = encode_snapshot(&Document::new(ActorId(999)));
+        app.receive_frame(&encode_message(&ProtocolMessage::Snapshot {
+            bytes: snapshot,
+        }));
+        assert!(app.connection_state().loaded);
+        assert_eq!(app.stats().actor, Some(7));
     }
 
     #[test]
-    fn reconnect_sync_converges() {
-        let mut app = DemoApp::new();
-        app.toggle_disconnect();
-        draw_stroke(&mut app, Peer::Alice);
-        draw_stroke(&mut app, Peer::Bob);
-        app.reconnect_and_sync();
-        let stats = app.stats();
-        assert_eq!(stats.alice_visible, 2);
-        assert_eq!(stats.bob_visible, 2);
-        assert_eq!(stats.alice_queued, 0);
-        assert_eq!(stats.bob_queued, 0);
-    }
+    fn drawing_emits_update_frame() {
+        let mut app = ClientApp::new("demo");
+        app.set_connected(true);
+        app.receive_frame(&welcome(7));
+        let snapshot = encode_snapshot(&Document::new(ActorId(999)));
+        app.receive_frame(&encode_message(&ProtocolMessage::Snapshot {
+            bytes: snapshot,
+        }));
 
-    #[test]
-    fn undo_propagates_delete() {
-        let mut app = DemoApp::new();
-        draw_stroke(&mut app, Peer::Alice);
-        app.tick(1_000.0);
-        assert_eq!(app.stats().bob_visible, 1);
-        let events = app.undo(Peer::Alice);
-        assert!(matches!(
-            events.as_slice(),
-            [AppEvent::PacketCreated { .. }]
-        ));
-        app.tick(2_000.0);
-        assert_eq!(app.stats().alice_visible, 0);
-        assert_eq!(app.stats().bob_visible, 0);
-    }
-
-    #[test]
-    fn clear_all_resets_state() {
-        let mut app = DemoApp::new();
-        draw_stroke(&mut app, Peer::Alice);
-        let events = app.clear_all();
-        assert_eq!(events, vec![AppEvent::ClearPackets]);
-        assert_eq!(app.stats().alice_visible, 0);
-        assert_eq!(app.stats().total_bytes, 0);
-        assert!(app.wire_log().is_empty());
+        app.begin_stroke(AppPoint::new(0.0, 0.0, 1.0));
+        app.extend_stroke(AppPoint::new(1.0, 1.0, 1.0));
+        let events = app.end_stroke();
+        assert!(matches!(events.as_slice(), [ClientEvent::SendFrame(_)]));
+        assert_eq!(app.stats().visible_strokes, 1);
     }
 }

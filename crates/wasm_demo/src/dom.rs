@@ -32,18 +32,6 @@ pub(crate) fn set_text(id: &str, text: &str) {
     }
 }
 
-pub(crate) fn element_width(id: &str) -> Option<f64> {
-    element_by_id::<HtmlElement>(id)
-        .ok()
-        .map(|el| f64::from(el.offset_width()))
-}
-
-pub(crate) fn element_height(id: &str) -> Option<f64> {
-    element_by_id::<HtmlElement>(id)
-        .ok()
-        .map(|el| f64::from(el.offset_height()))
-}
-
 pub(crate) fn request_animation_frame(callback: &Closure<dyn FnMut(f64)>) -> Result<i32, JsValue> {
     web_window()?.request_animation_frame(callback.as_ref().unchecked_ref())
 }
@@ -58,10 +46,25 @@ pub(crate) fn dom_document() -> Result<DomDocument, JsValue> {
         .ok_or_else(|| JsValue::from_str("document unavailable"))
 }
 
-pub(crate) fn now() -> f64 {
+pub(crate) fn room_from_url() -> String {
     web_window()
         .ok()
-        .and_then(|window| window.performance())
-        .map(|performance| performance.now())
-        .unwrap_or(0.0)
+        .and_then(|window| window.location().hash().ok())
+        .map(|hash| hash.trim_start_matches('#').trim().to_string())
+        .filter(|hash| !hash.is_empty())
+        .unwrap_or_else(|| "demo".to_string())
+}
+
+pub(crate) fn websocket_url(room: &str) -> Result<String, JsValue> {
+    let location = web_window()?.location();
+    let protocol = match location.protocol()?.as_str() {
+        "https:" => "wss",
+        _ => "ws",
+    };
+    let host = location
+        .hostname()
+        .ok()
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| "localhost".to_string());
+    Ok(format!("{protocol}://{host}:3000/ws?room={room}"))
 }

@@ -13,8 +13,10 @@ The repository now contains:
 | Component | Purpose |
 |---------|---------|
 | `crates/vectis-crdt` | Core Rust CRDT library |
+| `crates/vectis-protocol` | Shared binary client/server WebSocket envelope |
 | `crates/app-core` | Platform-independent demo application logic |
 | `crates/wasm_demo` | Browser host adapter using `web-sys` and Canvas2D |
+| `crates/vectis-server` | In-memory WebSocket room server for the demo |
 
 ---
 
@@ -62,11 +64,17 @@ assert_eq!(doc_a.visible_stroke_ids(), doc_b.visible_stroke_ids());
 
 ---
 
-## Browser Demo
+## Client/Server Browser Demo
 
-The browser demo is split into reusable app logic and browser-specific I/O. `crates/app-core` owns the demo state, simulated networking, CRDT orchestration, and render view models. `crates/wasm_demo` translates browser input/events into `app-core` calls and renders the returned views with Canvas2D.
+The browser demo now uses a real client/server model. `crates/app-core` owns one local client document, CRDT orchestration, and render view models. `crates/wasm_demo` translates browser input/events into `app-core` calls, sends binary WebSocket frames, and renders with Canvas2D. `crates/vectis-server` assigns actor IDs, sends a full snapshot on join, applies accepted updates to room state, and broadcasts them to other clients.
 
-Build it with:
+Run the WebSocket server:
+
+```bash
+./build.sh server
+```
+
+Build the Wasm client:
 
 ```bash
 ./build.sh demo
@@ -85,8 +93,10 @@ python -m http.server 8080
 ```
 
 ```text
-http://localhost:8080/crates/wasm_demo/
+http://localhost:8080/crates/wasm_demo/#demo
 ```
+
+Open the same URL in multiple tabs to collaborate in the same room. The room id is the URL hash.
 
 ---
 
