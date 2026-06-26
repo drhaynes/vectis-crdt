@@ -139,9 +139,10 @@ impl AwarenessStore {
         let mut updated = 0;
         for chunk in data.chunks_exact(28) {
             if let Some(state) = decode_cursor(chunk)
-                && self.update(state) {
-                    updated += 1;
-                }
+                && self.update(state)
+            {
+                updated += 1;
+            }
         }
         updated
     }

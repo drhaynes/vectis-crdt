@@ -372,8 +372,8 @@ import init from './pkg/wasm_demo.js';
 init().catch(err => {
   document.body.innerHTML = `<div style="color:#f87171;padding:40px;font-family:monospace">
     <strong>Error loading wasm_demo:</strong><br><br>${err}<br><br>
-    From <code>wasm_demo/</code>, build with <code>wasm-pack build --target web --out-dir pkg --dev</code><br>
-    then serve the repository root and open <code>http://localhost:8080/wasm_demo/</code>
+    From <code>crates/wasm_demo/</code>, build with <code>wasm-pack build --target web --out-dir pkg --dev</code><br>
+    then serve the repository root and open <code>http://localhost:8080/crates/wasm_demo/</code>
   </div>`;
 });
 </script>
