@@ -141,11 +141,10 @@ impl Document {
                 break;
             }
             for op in ready {
-                if let Some(id) = self.apply_remote(op) {
-                    if !changed.contains(&id) {
+                if let Some(id) = self.apply_remote(op)
+                    && !changed.contains(&id) {
                         changed.push(id);
                     }
-                }
             }
         }
 

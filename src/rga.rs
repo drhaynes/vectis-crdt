@@ -173,13 +173,12 @@ impl RgaArray {
     /// Marks an item as a tombstone. O(1) via index.
     /// Returns true if the item was found and was previously active.
     pub fn mark_deleted(&mut self, target: OpId, deleted_at: OpId) -> bool {
-        if let Some(&idx) = self.index.get(&target) {
-            if self.items[idx].is_visible() {
+        if let Some(&idx) = self.index.get(&target)
+            && self.items[idx].is_visible() {
                 self.items[idx].state = ItemState::Tombstone { deleted_at };
                 self.tombstone_count += 1;
                 return true;
             }
-        }
         false
     }
 

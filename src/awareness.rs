@@ -138,11 +138,10 @@ impl AwarenessStore {
     pub fn apply_bulk(&mut self, data: &[u8]) -> usize {
         let mut updated = 0;
         for chunk in data.chunks_exact(28) {
-            if let Some(state) = decode_cursor(chunk) {
-                if self.update(state) {
+            if let Some(state) = decode_cursor(chunk)
+                && self.update(state) {
                     updated += 1;
                 }
-            }
         }
         updated
     }
