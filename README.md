@@ -66,7 +66,7 @@ assert_eq!(doc_a.visible_stroke_ids(), doc_b.visible_stroke_ids());
 
 ## Client/Server Browser Demo
 
-The browser demo now uses a real client/server model. `crates/app-core` owns one local client document, CRDT orchestration, and render view models. `crates/wasm_demo` translates browser input/events into `app-core` calls, sends binary WebSocket frames, and renders with Canvas2D. `crates/vectis-server` assigns actor IDs, sends a full snapshot on join, applies accepted updates to room state, and broadcasts them to other clients.
+The browser demo now uses a real client/server model. `crates/app-core` owns one local client document, CRDT orchestration, awareness state, and render view models. `crates/wasm_demo` translates browser input/events into `app-core` calls, sends binary WebSocket frames, persists the resume token in localStorage, and renders with Canvas2D. `crates/vectis-server` assigns actor IDs, resumes inactive sessions, sends op-log deltas when possible, falls back to snapshots when required, applies accepted updates to room state, broadcasts MVV for GC, and relays cursor awareness to other clients.
 
 Run the WebSocket server:
 
@@ -98,6 +98,8 @@ http://localhost:8080/crates/wasm_demo/#demo
 
 Open the same URL in multiple tabs to collaborate in the same room. The room id is the URL hash.
 
+Reconnect uses a room-scoped resume token stored in browser localStorage. If the previous actor is still connected, the server assigns a fresh actor to avoid duplicate `(actor, lamport)` operation IDs.
+
 ---
 
 ## Features
@@ -109,6 +111,7 @@ Open the same URL in multiple tabs to collaborate in the same room. The room id 
 - **Viewport-oriented data model** — AABB per stroke for efficient culling by renderers.
 - **RDP simplification** — configurable, iterative path simplification for high-frequency stylus input.
 - **Ephemeral cursor awareness** — TTL-based cursor state, separate from CRDT history.
+- **Client/server demo runtime** — WebSocket binary protocol, op-log delta sync, MVV broadcast, awareness relay, and resume tokens.
 - **Local undo** — session-local undo stack that emits real delete operations.
 - **Optional LZ4 compression** — feature-gated with `compress`.
 

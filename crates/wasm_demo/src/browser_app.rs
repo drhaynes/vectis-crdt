@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use app_core::{ClientApp, ClientEvent};
+use app_core::{AppPoint, ClientApp, ClientEvent};
 use js_sys::{ArrayBuffer, Uint8Array};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -11,22 +11,31 @@ use web_sys::{
     PointerEvent, WebSocket,
 };
 
-use crate::dom::{canvas_context, room_from_url, websocket_url};
+use crate::dom::{
+    canvas_context, resume_token_from_storage, room_from_url, store_resume_token, websocket_url,
+};
 use crate::{render, ui};
 
 pub(crate) struct BrowserApp {
     app: ClientApp,
     ctx: CanvasRenderingContext2d,
     ws: Option<WebSocket>,
+    latest_cursor: Option<AppPoint>,
+    last_cursor_sent_ms: f64,
 }
 
 impl BrowserApp {
     pub(crate) fn new() -> Result<Self, JsValue> {
         let room = room_from_url();
+        let resume_token = resume_token_from_storage(&room);
+        let mut app = ClientApp::new(room);
+        app.set_resume_token(resume_token);
         Ok(Self {
-            app: ClientApp::new(room),
+            app,
             ctx: canvas_context("canvas-main")?,
             ws: None,
+            latest_cursor: None,
+            last_cursor_sent_ms: 0.0,
         })
     }
 
@@ -84,7 +93,15 @@ impl BrowserApp {
         Ok(())
     }
 
-    pub(crate) fn frame(&mut self, _now_ms: f64) {
+    pub(crate) fn frame(&mut self, now_ms: f64) {
+        if now_ms - self.last_cursor_sent_ms >= 80.0
+            && let Some(point) = self.latest_cursor
+        {
+            self.last_cursor_sent_ms = now_ms;
+            let events = self.app.awareness_frame(point, now_ms.max(0.0) as u64);
+            self.send_events(events);
+        }
+
         render::render_app(&self.ctx, &self.app);
         ui::update_stats(&self.app);
         ui::update_controls(&self.app);
@@ -92,11 +109,15 @@ impl BrowserApp {
     }
 
     pub(crate) fn pointer_down(&mut self, canvas: &HtmlCanvasElement, event: &PointerEvent) {
-        self.app.begin_stroke(render::pointer_pos(canvas, event));
+        let point = render::pointer_pos(canvas, event);
+        self.latest_cursor = Some(point);
+        self.app.begin_stroke(point);
     }
 
     pub(crate) fn pointer_move(&mut self, canvas: &HtmlCanvasElement, event: &PointerEvent) {
-        self.app.extend_stroke(render::pointer_pos(canvas, event));
+        let point = render::pointer_pos(canvas, event);
+        self.latest_cursor = Some(point);
+        self.app.extend_stroke(point);
     }
 
     pub(crate) fn pointer_up(&mut self) {
@@ -120,7 +141,9 @@ impl BrowserApp {
     }
 
     fn handle_frame(&mut self, bytes: &[u8]) {
-        self.app.receive_frame(bytes);
+        let events = self.app.receive_frame(bytes);
+        store_resume_token(self.app.room(), self.app.resume_token());
+        self.send_events(events);
     }
 
     fn handle_close(&mut self) {

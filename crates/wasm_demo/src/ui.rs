@@ -14,8 +14,11 @@ pub(crate) fn update_stats(app: &ClientApp) {
             .map(|actor| actor.to_string())
             .unwrap_or_else(|| "pending".to_string()),
     );
+    set_text("resume-token", &stats.resume_token);
     set_text("visible-strokes", &stats.visible_strokes.to_string());
     set_text("undo-depth", &stats.undo_depth.to_string());
+    set_text("remote-cursors", &stats.remote_cursors.to_string());
+    set_text("gc-generation", &stats.gc_generation.to_string());
     set_text("frames-sent", &stats.frames_sent.to_string());
     set_text("frames-received", &stats.frames_received.to_string());
     set_text("bytes-sent", &fmt_bytes(stats.bytes_sent));

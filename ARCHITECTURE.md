@@ -386,9 +386,14 @@ A map where each key has its own LWW-Register. Used for canvas metadata (viewpor
 
 ## 9. Delta synchronization
 
-### Initial state: full snapshot
+### Initial state: delta or full snapshot
 
-On first connection (or after a long disconnection), the server sends a full snapshot:
+On connection, the client sends its current `VectorClock` in `ClientHello`. The server compares that vector with the room op-log base:
+
+- If the client dominates the op-log base, the server sends an `Update` containing only operations from the op-log that the client has not seen.
+- If the client is behind the op-log base, usually because GC cleared old tombstone-bearing history, the server sends a full snapshot.
+
+A full snapshot is encoded as:
 
 ```
 encode_snapshot(doc) → bytes
@@ -403,14 +408,14 @@ The snapshot serializes state as a sequence of ops, not a binary struct dump. Th
 
 ### Incremental synchronization
 
-For incremental updates, the client sends its `VectorClock` to the server. The server computes `diff = server_version.diff(client_version)` and sends only the ops the client doesn't have.
+For incremental updates, the client sends its `VectorClock` to the server. The server filters its retained op-log and sends only the ops whose `OpId` is newer than the client's clock component for that actor.
 
 ```rust
 VectorClock::diff(&self, other: &VectorClock) -> Vec<(ActorId, u64, u64)>
 // Returns ranges (actor, from_lamport, to_lamport) that self has but other does not
 ```
 
-Reconstruction is idempotent: if the client already has the op (due to reconnection), the RGA ignores it via the idempotency check.
+Reconstruction is idempotent: if the client already has the op (due to reconnection), the RGA ignores it via the idempotency check. After a GC cycle removes tombstones, the server clears the op-log and records the current document version as the new op-log base. Clients behind that base receive a snapshot instead of a delta.
 
 ---
 
@@ -684,22 +689,25 @@ Run the demo server with:
 
 `crates/vectis-protocol` owns the binary WebSocket envelope used by browser and server:
 
-- `ClientHello` with room id and client state vector
-- `ServerWelcome` with assigned actor id and color
+- `ClientHello` with room id, resume token, and client state vector
+- `ServerWelcome` with assigned actor id, color, and resume token
 - `Snapshot` carrying `encode_snapshot` bytes
 - `Update` carrying `encode_update` bytes
-- `StateVector` for future delta/MVV support
+- `StateVector` after snapshot/update application
+- `Mvv` carrying `encode_state_vector(min(all client vectors))`
+- `Awareness` carrying fixed 28-byte cursor payloads
 - `Error` for server-readable protocol failures
 
 `crates/app-core` owns platform-independent single-client behavior:
 
 - one local `Document` and causal buffer
+- awareness store for remote cursors
 - live stroke construction
 - local undo
 - outbound protocol frame generation
-- inbound welcome, snapshot, update, and error handling
+- inbound welcome, snapshot, update, MVV, awareness, and error handling
 - wire log and statistics
-- render view models for committed and live strokes
+- render view models for committed strokes, live strokes, and cursors
 
 `crates/wasm_demo` owns browser host integration:
 
@@ -707,17 +715,23 @@ Run the demo server with:
 - DOM lookup and control event binding
 - pointer-event coordinate conversion
 - WebSocket open/message/close/error callbacks
+- room-scoped resume token persistence in localStorage
 - `requestAnimationFrame`
 - Canvas2D rendering from `app-core` view models
 - stats and wire-log updates
 
-`crates/vectis-server` owns in-memory room coordination for the first client/server slice:
+`crates/vectis-server` owns in-memory room coordination:
 
-- fresh `ActorId` assignment per WebSocket connection
-- full snapshot on join
+- fresh `ActorId` assignment per new session
+- inactive-session resume by token
+- op-log delta on join when the client is not behind the op-log base
+- full snapshot fallback when the client is behind the op-log base
 - actor ownership validation for incoming ops
 - server-side `Document` and causal buffer per room
 - accepted update broadcast to other clients in the room
+- MVV computation from client `StateVector` reports
+- MVV-gated server GC with op-log-base reset after tombstone removal
+- cursor awareness validation and relay
 
 ### App boundary
 
@@ -995,9 +1009,9 @@ Snapshots are large (all points + properties for all strokes). Compressing the s
 
 1. Add a native demo host that reuses `crates/app-core`
 2. Add Playwright coverage for `wasm_demo` multi-peer interactions
-3. Add server-side op-log delta sync instead of always sending a full snapshot on join
-4. Implement server-side MVV broadcast: compute `min_version = min(all_peers)` periodically and broadcast to all clients
-5. Enable `compress` feature for updates > 200B
+3. Add durable server persistence for snapshots, op logs, and resume sessions
+4. Enable `compress` feature for updates > 200B
+5. Add cross-browser integration tests for reconnect delta, snapshot fallback, MVV/GC, and awareness
 
 ### Future improvements
 

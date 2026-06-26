@@ -18,6 +18,16 @@ pub(crate) fn render_app(ctx: &CanvasRenderingContext2d, app: &ClientApp) {
     if let Some(stroke) = app.live_stroke() {
         draw_stroke(ctx, &stroke);
     }
+
+    for cursor in app.cursors() {
+        draw_cursor(
+            ctx,
+            cursor.point.x,
+            cursor.point.y,
+            cursor.color,
+            cursor.actor,
+        );
+    }
 }
 
 pub(crate) fn draw_stroke(ctx: &CanvasRenderingContext2d, stroke: &StrokeView) {
@@ -55,4 +65,23 @@ fn u32_rgb(color: u32) -> (u8, u8, u8) {
         ((color >> 16) & 0xff) as u8,
         ((color >> 8) & 0xff) as u8,
     )
+}
+
+fn draw_cursor(ctx: &CanvasRenderingContext2d, x: f32, y: f32, color: u32, actor: u64) {
+    let (r, g, b) = u32_rgb(color);
+    let color = format!("rgb({},{},{})", r, g, b);
+    let x = f64::from(x);
+    let y = f64::from(y);
+
+    ctx.begin_path();
+    ctx.set_stroke_style_str(&color);
+    ctx.set_line_width(2.0);
+    ctx.move_to(x - 8.0, y);
+    ctx.line_to(x + 8.0, y);
+    ctx.move_to(x, y - 8.0);
+    ctx.line_to(x, y + 8.0);
+    ctx.stroke();
+
+    ctx.set_fill_style_str(&color);
+    let _ = ctx.fill_text(&format!("actor {actor}"), x + 10.0, y - 10.0);
 }
