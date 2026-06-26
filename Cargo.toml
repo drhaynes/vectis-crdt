@@ -36,3 +36,7 @@ opt-level     = "z"
 lto           = true
 codegen-units = 1
 panic         = "abort"
+
+[workspace]
+members = [".", "wasm_demo"]
+resolver = "2"

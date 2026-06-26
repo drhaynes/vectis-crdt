@@ -104,8 +104,7 @@ impl Document {
             }
 
             if let ItemState::Tombstone { deleted_at } = &item.state {
-                let is_stable = self.min_version.get(deleted_at.actor)
-                    >= deleted_at.lamport.0;
+                let is_stable = self.min_version.get(deleted_at.actor) >= deleted_at.lamport.0;
 
                 if is_stable {
                     ids_to_remove.push(item.id);
@@ -162,18 +161,17 @@ impl Document {
                 } else {
                     item.origin_left
                 };
-                let new_or = if !item.origin_right.is_zero()
-                    && remove_set.contains(&item.origin_right)
-                {
-                    find_kept_ancestor(
-                        item.origin_right,
-                        &remove_set,
-                        &self.stroke_order.items,
-                        &self.stroke_order.index,
-                    )
-                } else {
-                    item.origin_right
-                };
+                let new_or =
+                    if !item.origin_right.is_zero() && remove_set.contains(&item.origin_right) {
+                        find_kept_ancestor(
+                            item.origin_right,
+                            &remove_set,
+                            &self.stroke_order.items,
+                            &self.stroke_order.index,
+                        )
+                    } else {
+                        item.origin_right
+                    };
                 (item.id, new_ol, new_or)
             })
             .collect();
@@ -191,15 +189,16 @@ impl Document {
             self.stroke_store.remove(id);
         }
 
-        self.stroke_order.items.retain(|item| !remove_set.contains(&item.id));
+        self.stroke_order
+            .items
+            .retain(|item| !remove_set.contains(&item.id));
 
         // Full index rebuild required after retain (positions shifted).
         self.stroke_order.rebuild_index();
 
         self.stroke_order.tombstone_count =
             self.stroke_order.tombstone_count.saturating_sub(removed);
-        self.stroke_order.total_count =
-            self.stroke_order.total_count.saturating_sub(removed);
+        self.stroke_order.total_count = self.stroke_order.total_count.saturating_sub(removed);
 
         self.gc_generation += 1;
 

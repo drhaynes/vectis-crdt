@@ -21,8 +21,10 @@
 //!   0x02 = U32
 //!   0x03 = String
 
-use crate::document::{MetadataKey, MetadataValue, Operation, PropertyUpdate,
-                      MAX_ACTORS, MAX_POINTS_PER_STROKE, MAX_STROKES};
+use crate::document::{
+    MetadataKey, MetadataValue, Operation, PropertyUpdate, MAX_ACTORS, MAX_POINTS_PER_STROKE,
+    MAX_STROKES,
+};
 use crate::error::VectisError;
 use crate::error::VectisResult;
 use crate::rga::StrokeId;
@@ -87,19 +89,26 @@ fn decode_op_id_at(bytes: &[u8], cursor: usize) -> Option<(OpId, usize)> {
     let (lamport, n1) = decode_varint(&bytes[cursor..])?;
     let (actor, n2) = decode_varint(&bytes[cursor + n1..])?;
     Some((
-        OpId { lamport: LamportTs(lamport), actor: ActorId(actor) },
+        OpId {
+            lamport: LamportTs(lamport),
+            actor: ActorId(actor),
+        },
         cursor + n1 + n2,
     ))
 }
 
 fn decode_f32_at(bytes: &[u8], cursor: usize) -> Option<(f32, usize)> {
-    if cursor + 4 > bytes.len() { return None; }
+    if cursor + 4 > bytes.len() {
+        return None;
+    }
     let arr: [u8; 4] = bytes[cursor..cursor + 4].try_into().ok()?;
     Some((f32::from_le_bytes(arr), cursor + 4))
 }
 
 fn decode_u32_at(bytes: &[u8], cursor: usize) -> Option<(u32, usize)> {
-    if cursor + 4 > bytes.len() { return None; }
+    if cursor + 4 > bytes.len() {
+        return None;
+    }
     let arr: [u8; 4] = bytes[cursor..cursor + 4].try_into().ok()?;
     Some((u32::from_le_bytes(arr), cursor + 4))
 }
@@ -112,8 +121,12 @@ fn encode_string(s: &str, out: &mut Vec<u8>) {
 fn decode_string_at(bytes: &[u8], cursor: usize) -> Option<(String, usize)> {
     let (len, n) = decode_varint(&bytes[cursor..])?;
     let end = cursor + n + len as usize;
-    if end > bytes.len() { return None; }
-    let s = std::str::from_utf8(&bytes[cursor + n..end]).ok()?.to_string();
+    if end > bytes.len() {
+        return None;
+    }
+    let s = std::str::from_utf8(&bytes[cursor + n..end])
+        .ok()?
+        .to_string();
     Some((s, end))
 }
 
@@ -129,13 +142,29 @@ fn encode_transform(t: &Transform2D, out: &mut Vec<u8>) {
 }
 
 fn decode_transform_at(bytes: &[u8], mut cursor: usize) -> Option<(Transform2D, usize)> {
-    let (a, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-    let (b, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-    let (cc, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-    let (d, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-    let (tx, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-    let (ty, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-    Some((Transform2D { a, b, c: cc, d, tx, ty }, cursor))
+    let (a, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
+    let (b, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
+    let (cc, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
+    let (d, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
+    let (tx, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
+    let (ty, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
+    Some((
+        Transform2D {
+            a,
+            b,
+            c: cc,
+            d,
+            tx,
+            ty,
+        },
+        cursor,
+    ))
 }
 
 // ─── StrokeData / StrokeProperties ───────────────────────────────────────────
@@ -151,18 +180,25 @@ fn encode_stroke_data(data: &StrokeData, out: &mut Vec<u8>) {
 }
 
 fn decode_stroke_data_at(bytes: &[u8], mut cursor: usize) -> Option<(StrokeData, usize)> {
-    if cursor >= bytes.len() { return None; }
+    if cursor >= bytes.len() {
+        return None;
+    }
     let tool = ToolKind::from_u8(bytes[cursor]);
     cursor += 1;
     let (count, n) = decode_varint(&bytes[cursor..])?;
     cursor += n;
     // Enforce point limit: reject malformed payloads before allocating.
-    if count as usize > MAX_POINTS_PER_STROKE { return None; }
+    if count as usize > MAX_POINTS_PER_STROKE {
+        return None;
+    }
     let mut points = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        let (x, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-        let (y, c) = decode_f32_at(bytes, cursor)?; cursor = c;
-        let (p, c) = decode_f32_at(bytes, cursor)?; cursor = c;
+        let (x, c) = decode_f32_at(bytes, cursor)?;
+        cursor = c;
+        let (y, c) = decode_f32_at(bytes, cursor)?;
+        cursor = c;
+        let (p, c) = decode_f32_at(bytes, cursor)?;
+        cursor = c;
         points.push(StrokePoint::new(x, y, p));
     }
     Some((StrokeData::new(points.into(), tool), cursor))
@@ -179,20 +215,31 @@ fn encode_stroke_properties(props: &StrokeProperties, out: &mut Vec<u8>) {
     encode_transform(&props.transform.value, out);
 }
 
-fn decode_stroke_properties_at(bytes: &[u8], mut cursor: usize) -> Option<(StrokeProperties, usize)> {
+fn decode_stroke_properties_at(
+    bytes: &[u8],
+    mut cursor: usize,
+) -> Option<(StrokeProperties, usize)> {
     use crate::stroke::LwwRegister;
 
-    let (color_ts, c) = decode_op_id_at(bytes, cursor)?; cursor = c;
-    let (color_val, c) = decode_u32_at(bytes, cursor)?; cursor = c;
+    let (color_ts, c) = decode_op_id_at(bytes, cursor)?;
+    cursor = c;
+    let (color_val, c) = decode_u32_at(bytes, cursor)?;
+    cursor = c;
 
-    let (sw_ts, c) = decode_op_id_at(bytes, cursor)?; cursor = c;
-    let (sw_val, c) = decode_f32_at(bytes, cursor)?; cursor = c;
+    let (sw_ts, c) = decode_op_id_at(bytes, cursor)?;
+    cursor = c;
+    let (sw_val, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
 
-    let (op_ts, c) = decode_op_id_at(bytes, cursor)?; cursor = c;
-    let (op_val, c) = decode_f32_at(bytes, cursor)?; cursor = c;
+    let (op_ts, c) = decode_op_id_at(bytes, cursor)?;
+    cursor = c;
+    let (op_val, c) = decode_f32_at(bytes, cursor)?;
+    cursor = c;
 
-    let (tr_ts, c) = decode_op_id_at(bytes, cursor)?; cursor = c;
-    let (tr_val, c) = decode_transform_at(bytes, cursor)?; cursor = c;
+    let (tr_ts, c) = decode_op_id_at(bytes, cursor)?;
+    cursor = c;
+    let (tr_val, c) = decode_transform_at(bytes, cursor)?;
+    cursor = c;
 
     Some((
         StrokeProperties {
@@ -209,13 +256,13 @@ fn decode_stroke_properties_at(bytes: &[u8], mut cursor: usize) -> Option<(Strok
 
 fn encode_metadata_key(key: &MetadataKey, out: &mut Vec<u8>) {
     let tag: u8 = match key {
-        MetadataKey::ViewportX      => 0,
-        MetadataKey::ViewportY      => 1,
-        MetadataKey::ViewportZoom   => 2,
+        MetadataKey::ViewportX => 0,
+        MetadataKey::ViewportY => 1,
+        MetadataKey::ViewportZoom => 2,
         MetadataKey::BackgroundColor => 3,
-        MetadataKey::GridEnabled    => 4,
-        MetadataKey::GridSpacing    => 5,
-        MetadataKey::Custom(_)      => 255,
+        MetadataKey::GridEnabled => 4,
+        MetadataKey::GridSpacing => 5,
+        MetadataKey::Custom(_) => 255,
     };
     out.push(tag);
     if let MetadataKey::Custom(s) = key {
@@ -224,7 +271,9 @@ fn encode_metadata_key(key: &MetadataKey, out: &mut Vec<u8>) {
 }
 
 fn decode_metadata_key_at(bytes: &[u8], cursor: usize) -> Option<(MetadataKey, usize)> {
-    if cursor >= bytes.len() { return None; }
+    if cursor >= bytes.len() {
+        return None;
+    }
     let tag = bytes[cursor];
     let next = cursor + 1;
     let key = match tag {
@@ -265,17 +314,23 @@ fn encode_metadata_value(value: &MetadataValue, out: &mut Vec<u8>) {
 }
 
 fn decode_metadata_value_at(bytes: &[u8], cursor: usize) -> Option<(MetadataValue, usize)> {
-    if cursor >= bytes.len() { return None; }
+    if cursor >= bytes.len() {
+        return None;
+    }
     let tag = bytes[cursor];
     let next = cursor + 1;
     match tag {
         0 => {
-            if next + 8 > bytes.len() { return None; }
+            if next + 8 > bytes.len() {
+                return None;
+            }
             let arr: [u8; 8] = bytes[next..next + 8].try_into().ok()?;
             Some((MetadataValue::F64(f64::from_le_bytes(arr)), next + 8))
         }
         1 => {
-            if next >= bytes.len() { return None; }
+            if next >= bytes.len() {
+                return None;
+            }
             Some((MetadataValue::Bool(bytes[next] != 0), next + 1))
         }
         2 => {
@@ -294,22 +349,48 @@ fn decode_metadata_value_at(bytes: &[u8], cursor: usize) -> Option<(MetadataValu
 
 fn encode_property_update(update: &PropertyUpdate, out: &mut Vec<u8>) {
     match update {
-        PropertyUpdate::Color(v)       => { out.push(0); encode_u32(*v, out); }
-        PropertyUpdate::StrokeWidth(v) => { out.push(1); encode_f32(*v, out); }
-        PropertyUpdate::Opacity(v)     => { out.push(2); encode_f32(*v, out); }
-        PropertyUpdate::Transform(v)   => { out.push(3); encode_transform(v, out); }
+        PropertyUpdate::Color(v) => {
+            out.push(0);
+            encode_u32(*v, out);
+        }
+        PropertyUpdate::StrokeWidth(v) => {
+            out.push(1);
+            encode_f32(*v, out);
+        }
+        PropertyUpdate::Opacity(v) => {
+            out.push(2);
+            encode_f32(*v, out);
+        }
+        PropertyUpdate::Transform(v) => {
+            out.push(3);
+            encode_transform(v, out);
+        }
     }
 }
 
 fn decode_property_update_at(bytes: &[u8], cursor: usize) -> Option<(PropertyUpdate, usize)> {
-    if cursor >= bytes.len() { return None; }
+    if cursor >= bytes.len() {
+        return None;
+    }
     let tag = bytes[cursor];
     let next = cursor + 1;
     match tag {
-        0 => { let (v, c) = decode_u32_at(bytes, next)?; Some((PropertyUpdate::Color(v), c)) }
-        1 => { let (v, c) = decode_f32_at(bytes, next)?; Some((PropertyUpdate::StrokeWidth(v), c)) }
-        2 => { let (v, c) = decode_f32_at(bytes, next)?; Some((PropertyUpdate::Opacity(v), c)) }
-        3 => { let (v, c) = decode_transform_at(bytes, next)?; Some((PropertyUpdate::Transform(v), c)) }
+        0 => {
+            let (v, c) = decode_u32_at(bytes, next)?;
+            Some((PropertyUpdate::Color(v), c))
+        }
+        1 => {
+            let (v, c) = decode_f32_at(bytes, next)?;
+            Some((PropertyUpdate::StrokeWidth(v), c))
+        }
+        2 => {
+            let (v, c) = decode_f32_at(bytes, next)?;
+            Some((PropertyUpdate::Opacity(v), c))
+        }
+        3 => {
+            let (v, c) = decode_transform_at(bytes, next)?;
+            Some((PropertyUpdate::Transform(v), c))
+        }
         _ => None,
     }
 }
@@ -318,7 +399,13 @@ fn decode_property_update_at(bytes: &[u8], cursor: usize) -> Option<(PropertyUpd
 
 fn encode_operation(op: &Operation, out: &mut Vec<u8>) {
     match op {
-        Operation::InsertStroke { id, origin_left, origin_right, data, properties } => {
+        Operation::InsertStroke {
+            id,
+            origin_left,
+            origin_right,
+            data,
+            properties,
+        } => {
             out.push(0x01);
             encode_op_id_into(id, out);
             encode_op_id_into(origin_left, out);
@@ -342,45 +429,77 @@ fn encode_operation(op: &Operation, out: &mut Vec<u8>) {
             encode_op_id_into(id, out);
             encode_metadata_key(key, out);
             match value {
-                Some(v) => { out.push(1); encode_metadata_value(v, out); }
-                None    => { out.push(0); }
+                Some(v) => {
+                    out.push(1);
+                    encode_metadata_value(v, out);
+                }
+                None => {
+                    out.push(0);
+                }
             }
         }
     }
 }
 
 fn decode_operation_at(bytes: &[u8], cursor: usize) -> Option<(Operation, usize)> {
-    if cursor >= bytes.len() { return None; }
+    if cursor >= bytes.len() {
+        return None;
+    }
     let tag = bytes[cursor];
     let mut c = cursor + 1;
 
     match tag {
         0x01 => {
-            let (id, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (ol, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (or_, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (data, nc) = decode_stroke_data_at(bytes, c)?; c = nc;
-            let (properties, nc) = decode_stroke_properties_at(bytes, c)?; c = nc;
-            Some((Operation::InsertStroke { id, origin_left: ol, origin_right: or_, data, properties }, c))
+            let (id, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (ol, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (or_, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (data, nc) = decode_stroke_data_at(bytes, c)?;
+            c = nc;
+            let (properties, nc) = decode_stroke_properties_at(bytes, c)?;
+            c = nc;
+            Some((
+                Operation::InsertStroke {
+                    id,
+                    origin_left: ol,
+                    origin_right: or_,
+                    data,
+                    properties,
+                },
+                c,
+            ))
         }
         0x02 => {
-            let (id, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (target, nc) = decode_op_id_at(bytes, c)?; c = nc;
+            let (id, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (target, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
             Some((Operation::DeleteStroke { id, target }, c))
         }
         0x03 => {
-            let (id, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (target, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (update, nc) = decode_property_update_at(bytes, c)?; c = nc;
+            let (id, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (target, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (update, nc) = decode_property_update_at(bytes, c)?;
+            c = nc;
             Some((Operation::UpdateProperty { id, target, update }, c))
         }
         0x04 => {
-            let (id, nc) = decode_op_id_at(bytes, c)?; c = nc;
-            let (key, nc) = decode_metadata_key_at(bytes, c)?; c = nc;
-            if c >= bytes.len() { return None; }
-            let has_value = bytes[c]; c += 1;
+            let (id, nc) = decode_op_id_at(bytes, c)?;
+            c = nc;
+            let (key, nc) = decode_metadata_key_at(bytes, c)?;
+            c = nc;
+            if c >= bytes.len() {
+                return None;
+            }
+            let has_value = bytes[c];
+            c += 1;
             let value = if has_value != 0 {
-                let (v, nc) = decode_metadata_value_at(bytes, c)?; c = nc;
+                let (v, nc) = decode_metadata_value_at(bytes, c)?;
+                c = nc;
                 Some(v)
             } else {
                 None
@@ -425,9 +544,14 @@ pub fn decode_update(bytes: &[u8]) -> VectisResult<Vec<Operation>> {
                 cursor = next;
                 ops.push(op);
             }
-            None => return Err(VectisError::DecodingError(
-                format!("malformed operation {} of {} at byte {}", i + 1, count, cursor)
-            )),
+            None => {
+                return Err(VectisError::DecodingError(format!(
+                    "malformed operation {} of {} at byte {}",
+                    i + 1,
+                    count,
+                    cursor
+                )))
+            }
         }
     }
     Ok(ops)
@@ -450,12 +574,18 @@ pub fn encode_state_vector(vc: &VectorClock) -> Vec<u8> {
 /// unbounded BTreeMap growth from spoofed actor IDs.
 pub fn decode_vector_clock(bytes: &[u8]) -> VectorClock {
     let mut vc = VectorClock::new();
-    let Some((count, mut cursor)) = decode_varint(bytes) else { return vc; };
+    let Some((count, mut cursor)) = decode_varint(bytes) else {
+        return vc;
+    };
     let safe_count = (count as usize).min(MAX_ACTORS);
     for _ in 0..safe_count {
-        let Some((actor, n1)) = decode_varint(&bytes[cursor..]) else { break; };
+        let Some((actor, n1)) = decode_varint(&bytes[cursor..]) else {
+            break;
+        };
         cursor += n1;
-        let Some((ts, n2)) = decode_varint(&bytes[cursor..]) else { break; };
+        let Some((ts, n2)) = decode_varint(&bytes[cursor..]) else {
+            break;
+        };
         cursor += n2;
         vc.advance(ActorId(actor), ts);
     }
@@ -477,7 +607,10 @@ pub fn decode_op_id(bytes: &[u8]) -> OpId {
     }
     let lamport = u64::from_le_bytes(bytes[0..8].try_into().unwrap_or([0u8; 8]));
     let actor = u64::from_le_bytes(bytes[8..16].try_into().unwrap_or([0u8; 8]));
-    OpId { lamport: LamportTs(lamport), actor: ActorId(actor) }
+    OpId {
+        lamport: LamportTs(lamport),
+        actor: ActorId(actor),
+    }
 }
 
 /// Encode a list of StrokeIds as a flat byte array (16 bytes each).
@@ -556,10 +689,7 @@ pub fn encode_snapshot(doc: &crate::document::Document) -> Vec<u8> {
 }
 
 /// Decode a snapshot into a new Document.
-pub fn decode_snapshot(
-    bytes: &[u8],
-    actor: ActorId,
-) -> VectisResult<crate::document::Document> {
+pub fn decode_snapshot(bytes: &[u8], actor: ActorId) -> VectisResult<crate::document::Document> {
     if bytes.is_empty() {
         return Err(VectisError::DecodingError("empty snapshot".into()));
     }
@@ -601,8 +731,8 @@ pub fn decode_snapshot(
     doc.version = version;
 
     // Operations
-    let ops = decode_update(&bytes[cursor..])
-        .map_err(|e| VectisError::DecodingError(e.to_string()))?;
+    let ops =
+        decode_update(&bytes[cursor..]).map_err(|e| VectisError::DecodingError(e.to_string()))?;
     for op in ops {
         doc.apply_remote(op);
     }
@@ -629,7 +759,10 @@ mod tests {
 
     #[test]
     fn op_id_roundtrip() {
-        let id = OpId { lamport: LamportTs(12345), actor: ActorId(67890) };
+        let id = OpId {
+            lamport: LamportTs(12345),
+            actor: ActorId(67890),
+        };
         let encoded = encode_op_id(&id);
         let decoded = decode_op_id(&encoded);
         assert_eq!(id, decoded);
@@ -641,7 +774,8 @@ mod tests {
         let pts: Box<[StrokePoint]> = vec![
             StrokePoint::new(1.0, 2.0, 0.8),
             StrokePoint::new(3.0, 4.0, 0.9),
-        ].into();
+        ]
+        .into();
         let data = StrokeData::new(pts, ToolKind::Pen);
         let props = StrokeProperties::new(0xFF0000FF, 3.0, 1.0, OpId::ZERO);
         let id = doc.insert_stroke(data, props);
@@ -651,7 +785,12 @@ mod tests {
         let decoded = decode_update(&encoded).unwrap();
 
         assert_eq!(decoded.len(), 1);
-        if let Operation::InsertStroke { id: did, data: ddata, .. } = &decoded[0] {
+        if let Operation::InsertStroke {
+            id: did,
+            data: ddata,
+            ..
+        } = &decoded[0]
+        {
             assert_eq!(*did, id);
             assert_eq!(ddata.points.len(), 2);
             assert!((ddata.points[0].x - 1.0).abs() < 1e-6);

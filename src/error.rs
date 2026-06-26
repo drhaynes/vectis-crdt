@@ -38,20 +38,27 @@ impl std::fmt::Display for VectisError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VectisError::StrokeNotFound(id) => {
-                write!(f, "stroke not found: (lamport={}, actor={})", id.lamport.0, id.actor.0)
+                write!(
+                    f,
+                    "stroke not found: (lamport={}, actor={})",
+                    id.lamport.0, id.actor.0
+                )
             }
             VectisError::EncodingError(s) => write!(f, "encoding error: {s}"),
             VectisError::DecodingError(s) => write!(f, "decoding error: {s}"),
             VectisError::InvalidActorId => write!(f, "actor ID 0 is reserved"),
             VectisError::SnapshotVersionMismatch { expected, got } => write!(
-                f, "snapshot version mismatch: expected {expected}, got {got}"
+                f,
+                "snapshot version mismatch: expected {expected}, got {got}"
             ),
-            VectisError::CausalBufferOverflow { capacity } => write!(
-                f, "causal buffer overflow at capacity {capacity}"
-            ),
-            VectisError::LimitExceeded { what, limit, actual } => write!(
-                f, "limit exceeded: {what} (limit={limit}, actual={actual})"
-            ),
+            VectisError::CausalBufferOverflow { capacity } => {
+                write!(f, "causal buffer overflow at capacity {capacity}")
+            }
+            VectisError::LimitExceeded {
+                what,
+                limit,
+                actual,
+            } => write!(f, "limit exceeded: {what} (limit={limit}, actual={actual})"),
         }
     }
 }

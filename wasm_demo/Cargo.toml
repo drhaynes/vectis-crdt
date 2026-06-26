@@ -1,0 +1,32 @@
+[package]
+name = "wasm_demo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+console_error_panic_hook = "0.1"
+vectis-crdt = { path = "..", default-features = false }
+wasm-bindgen = "0.2"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "CanvasRenderingContext2d",
+  "CssStyleDeclaration",
+  "Document",
+  "DomRect",
+  "Element",
+  "Event",
+  "HtmlButtonElement",
+  "HtmlCanvasElement",
+  "HtmlElement",
+  "HtmlInputElement",
+  "Node",
+  "Performance",
+  "PointerEvent",
+  "Window",
+]

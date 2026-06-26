@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 /// Unique actor/client identifier.
 /// u64 instead of UUID for wire compactness.
@@ -92,7 +92,10 @@ impl VectorClock {
 
     /// Returns true if self has seen everything other has seen.
     pub fn dominates(&self, other: &VectorClock) -> bool {
-        other.clocks.iter().all(|(actor, &ts)| self.get(*actor) >= ts)
+        other
+            .clocks
+            .iter()
+            .all(|(actor, &ts)| self.get(*actor) >= ts)
     }
 
     /// Point-wise merge: take max of each component.
@@ -131,9 +134,18 @@ mod tests {
 
     #[test]
     fn opid_ordering() {
-        let a = OpId { lamport: LamportTs(5), actor: ActorId(1) };
-        let b = OpId { lamport: LamportTs(5), actor: ActorId(2) };
-        let c = OpId { lamport: LamportTs(6), actor: ActorId(1) };
+        let a = OpId {
+            lamport: LamportTs(5),
+            actor: ActorId(1),
+        };
+        let b = OpId {
+            lamport: LamportTs(5),
+            actor: ActorId(2),
+        };
+        let c = OpId {
+            lamport: LamportTs(6),
+            actor: ActorId(1),
+        };
         assert!(b > a); // same lamport, higher actor wins
         assert!(c > b); // higher lamport wins
     }
