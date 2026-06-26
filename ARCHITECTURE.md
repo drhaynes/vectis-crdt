@@ -655,111 +655,71 @@ The snapshot is a sequence of ops, not a struct dump. This has two advantages:
 
 ---
 
-## 14. Wasm bridge: zero-copy render
+## 14. Browser demo: Rust-owned Wasm app
 
 ### Compilation
 
+The core `vectis-crdt` crate is a pure Rust library. Browser integration lives in the separate `wasm_demo` workspace crate:
+
 ```toml
 [lib]
-crate-type = ["cdylib", "rlib"]
-# cdylib → wasm-bindgen generates .wasm + JS glue
-# rlib → allows use as a Rust dependency
+crate-type = ["cdylib"]
 ```
 
-The `wasm` feature activates `wasm-bindgen` and `js-sys`. Without it, the crate compiles as a pure Rust library (useful for native tests, benchmarks, Rust backends).
+Build the demo with:
 
-### `WasmDocument` — `src/wasm_bridge.rs`
+```bash
+./build.sh demo
+```
+
+This runs `wasm-pack` inside `wasm_demo/` and writes generated browser assets to `wasm_demo/pkg/`.
+
+### App boundary
+
+The demo uses `wasm-bindgen` and `web-sys` only at the browser host boundary:
+
+- startup via `#[wasm_bindgen(start)]`
+- DOM lookup and control event binding
+- pointer events from the two canvases
+- `requestAnimationFrame`
+- `CanvasRenderingContext2d` drawing
+
+CRDT state is not mediated through a JavaScript-facing document wrapper. The demo crate uses the same Rust API as native callers:
 
 ```rust
-#[wasm_bindgen]
-pub struct WasmDocument {
-    inner: Document,
-    buffer: CausalBuffer,
-    awareness: AwarenessStore,
-    render_buf: Vec<u8>,  // reusable render data buffer
+Document
+CausalBuffer
+encode_update
+decode_update
+StrokeData
+StrokePoint
+StrokeProperties
+ToolKind
+```
+
+### Demo state
+
+The Rust demo owns:
+
+- two `Document`s, one for Alice and one for Bob
+- one `CausalBuffer` per peer
+- live in-progress strokes
+- simulated packet queues and in-flight packet animation state
+- wire-log and statistics state
+
+### Rendering path
+
+Rendering is Rust-driven but uses browser Canvas2D as the raster backend. Each frame, the demo walks visible stroke IDs and renders directly from core document state:
+
+```rust
+for id in doc.visible_stroke_ids() {
+    if let Some((data, props)) = doc.get_stroke(&id) {
+        // CanvasRenderingContext2d: begin_path, move_to, line_to, stroke
+    }
 }
 ```
 
-`render_buf` is reused across frames: `clear()` instead of `alloc`. This avoids Wasm GC pressure and keeps the buffer warm in cache.
-
-### Zero-copy render path
-
-The standard Wasm pattern would copy data twice: Rust → JS. With zero-copy:
-
-```rust
-pub fn build_render_data(&mut self) -> *const u8 {
-    // Write into render_buf
-    // Return raw pointer into Wasm linear memory
-    self.render_buf.as_ptr()
-}
-```
-
-In JavaScript:
-```javascript
-const ptr = doc.build_render_data();
-const len = doc.get_render_data_len();
-const view = new DataView(wasmInstance.memory.buffer, ptr, len);
-// Read directly from Wasm memory — no copy
-```
-
-**Caveat**: the pointer is valid only until the next operation that mutates `render_buf`. The JS client must read all data in the same rAF frame before any mutation.
-
-### Render buffer layout
-
-Per visible stroke:
-```
-[id: 16 bytes = 2×u64 LE]
-[point_count: u32 LE]
-[tool: u8]
-[color: u32 LE]
-[stroke_width: f32 LE]
-[opacity: f32 LE]
-[transform: 6×f32 LE = a,b,c,d,tx,ty]
-[N × (x:f32, y:f32, pressure:f32)]  // N × 12 bytes
-```
-
-Pressure is included in each point for renderers that support it (variable line width, pencil-style rendering).
-
-### Exposed Wasm API
-
-```javascript
-// Lifecycle
-new WasmDocument(actorId: bigint): WasmDocument
-doc.insert_stroke(points: Float32Array, tool: number, color: number,
-                  width: number, opacity: number): Uint8Array  // → 16B StrokeId
-doc.delete_stroke(strokeId: Uint8Array): boolean
-doc.apply_update(updateBytes: Uint8Array): Uint8Array  // → affected StrokeIds
-
-// Render
-doc.build_render_data(): number                    // → pointer (use with DataView)
-doc.get_render_data_len(): number
-doc.build_render_data_viewport(vx0, vy0, vx1, vy1, strokeExpand): number
-
-// Properties
-doc.update_stroke_property(id, key, valueBytes): boolean
-doc.set_simplify_epsilon(epsilon: number): void
-doc.simplify_stroke(id, epsilon): number           // → points removed
-
-// Undo
-doc.undo(): Uint8Array                             // → 16B StrokeId or []
-doc.undo_depth(): number
-
-// Bounds
-doc.get_stroke_bounds(id): Uint8Array              // → 16B [min_x,min_y,max_x,max_y] f32 LE
-
-// Sync
-doc.encode_pending_update(): Uint8Array            // local ops to send
-doc.encode_state_vector(): Uint8Array
-doc.encode_snapshot(): Uint8Array
-WasmDocument.from_snapshot(actorId, bytes): WasmDocument
-
-// Awareness
-doc.apply_cursor_update(cursorBytes: Uint8Array): boolean
-doc.encode_local_cursor(x, y, nowMs, color): Uint8Array  // → 28 bytes
-doc.get_all_cursors(): Uint8Array                  // N×28 bytes
-doc.evict_stale_cursors(nowMs: bigint): number
-doc.remove_cursor(actorId: bigint): void
-```
+This removes the old JS render-buffer parsing path. The only JavaScript in `wasm_demo/index.html` is the module loader generated by `wasm-pack` plus a tiny `init()` call.
 
 ---
 
@@ -932,7 +892,7 @@ To prevent resource exhaustion from malformed or malicious external data, `decod
 
 Internal fields of `Document`, `RgaArray`, `VectorClock`, and `StrokeStore` are `pub(crate)`. This means:
 
-- Code within the crate (`gc.rs`, `encoding.rs`, `wasm_bridge.rs`) can access internals needed for its operation.
+- Code within the crate (`gc.rs`, `encoding.rs`, etc.) can access internals needed for its operation.
 - Code external to the crate **can only use public methods**. It cannot:
   - Set `doc.min_version` directly (risk of premature GC → corruption)
   - Modify `rga_array.items` (risk of desyncing the index)
@@ -995,16 +955,14 @@ Snapshots are large (all points + properties for all strokes). Compressing the s
 
 ### Integration
 
-1. Build to Wasm: `wasm-pack build --target web --out-dir pkg`
-2. Parse render buffer in JS using `DataView` with the layout from §14
-3. Implement server-side MVV broadcast: compute `min_version = min(all_peers)` periodically and broadcast to all clients
-4. Enable `compress` feature for updates > 200B
+1. Add Playwright coverage for `wasm_demo` multi-peer interactions
+2. Implement server-side MVV broadcast: compute `min_version = min(all_peers)` periodically and broadcast to all clients
+3. Enable `compress` feature for updates > 200B
 
 ### Future improvements
 
-5. **E2E tests with Playwright**: 2+ peer scenarios in headless Chromium
-6. **`VecDeque` for undo_stack**: O(1) pop_front
-7. **Property undo**: separate stack of `(StrokeId, PropertySnapshot)` for undoing style changes
+4. **`VecDeque` for undo_stack**: O(1) pop_front
+5. **Property undo**: separate stack of `(StrokeId, PropertySnapshot)` for undoing style changes
 8. **Groups/layers**: new layer CRDT primitive (RGA of layers, each layer has an RGA of strokes)
 9. **Snapshot compression**: LZ4 of the full blob before sending
 10. **Formal benchmarks**: `criterion` benchmarks for `integrate`, `encode_snapshot`, `build_render_data_viewport`

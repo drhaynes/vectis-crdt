@@ -19,14 +19,13 @@
 //!   (color, width, opacity, transform). Independent registers enable granular
 //!   concurrent merges without conflict.
 //!
-//! The root entry point is [`document::Document`]. The Wasm-facing API lives in
-//! [`wasm_bridge::WasmDocument`] (feature `wasm`).
+//! The root entry point is [`document::Document`]. The browser demo lives in the
+//! separate `wasm_demo` workspace crate and uses this core API directly.
 //!
 //! ## Feature flags
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `wasm` | yes | Enables wasm-bindgen and the JS API |
 //! | `compress` | no | Enables LZ4 compression for updates > 200 B |
 //!
 //! ## Module map
@@ -43,7 +42,6 @@
 //! | [`awareness`] | Ephemeral cursor positions (TTL-based, not CRDT) |
 //! | [`compression`] | LZ4 feature-gated threshold compression |
 //! | [`error`] | `VectisError`, `VectisResult` |
-//! | [`wasm_bridge`] | `WasmDocument`: zero-copy JS API (feature `wasm`) |
 
 pub mod awareness;
 pub mod causal_buffer;
@@ -55,9 +53,3 @@ pub mod gc;
 pub mod rga;
 pub mod stroke;
 pub mod types;
-
-#[cfg(feature = "wasm")]
-pub mod wasm_bridge;
-
-#[cfg(feature = "python")]
-pub mod python;
