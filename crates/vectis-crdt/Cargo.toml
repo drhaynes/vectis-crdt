@@ -1,0 +1,23 @@
+[package]
+name = "vectis-crdt"
+version = "0.1.3"
+edition.workspace = true
+rust-version.workspace = true
+description = "CRDT library for ordered collections of mutable objects. RGA/YATA sequence for deterministic z-order + LWW-Register per property. Binary wire format."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords = ["crdt", "wasm", "collaborative", "rga", "sync"]
+categories = ["data-structures", "wasm", "algorithms"]
+authors.workspace = true
+
+[features]
+default = []
+compress = ["lz4_flex"]
+
+[dependencies]
+lz4_flex = { version = "0.11", optional = true }
+
+[dev-dependencies]
+proptest = "1"

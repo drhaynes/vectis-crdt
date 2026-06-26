@@ -1,4 +1,4 @@
 /target
 /pkg
-/wasm_demo/pkg
+/crates/*/pkg
 node_modules

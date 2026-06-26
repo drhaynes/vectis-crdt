@@ -12,8 +12,8 @@ The repository now contains:
 
 | Component | Purpose |
 |---------|---------|
-| `vectis-crdt` | Core Rust CRDT library |
-| `wasm_demo` | Rust-owned WebAssembly browser demo using `web-sys` and Canvas2D |
+| `crates/vectis-crdt` | Core Rust CRDT library |
+| `crates/wasm_demo` | Rust-owned WebAssembly browser demo using `web-sys` and Canvas2D |
 
 ---
 
@@ -84,7 +84,7 @@ python -m http.server 8080
 ```
 
 ```text
-http://localhost:8080/wasm_demo/
+http://localhost:8080/crates/wasm_demo/
 ```
 
 ---
