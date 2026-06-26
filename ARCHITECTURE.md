@@ -655,11 +655,11 @@ The snapshot is a sequence of ops, not a struct dump. This has two advantages:
 
 ---
 
-## 14. Browser demo: Rust-owned Wasm app
+## 14. Demo app architecture
 
 ### Compilation
 
-The core `vectis-crdt` crate is a pure Rust library under `crates/vectis-crdt`. Browser integration lives in the separate `crates/wasm_demo` workspace crate:
+The core `vectis-crdt` crate is a pure Rust library under `crates/vectis-crdt`. Demo application behavior lives in `crates/app-core`, and browser integration lives in `crates/wasm_demo`:
 
 ```toml
 [lib]
@@ -674,9 +674,29 @@ Build the demo with:
 
 This runs `wasm-pack` inside `crates/wasm_demo/` and writes generated browser assets to `crates/wasm_demo/pkg/`.
 
+### Crate split
+
+`crates/app-core` owns platform-independent demo behavior:
+
+- Alice/Bob `Document` instances and causal buffers
+- live stroke construction
+- undo and clear operations
+- simulated latency, disconnection, queued packets, and in-flight packets
+- wire log and statistics
+- render view models for committed strokes, live strokes, and packet animation
+
+`crates/wasm_demo` owns browser host integration:
+
+- startup via `#[wasm_bindgen(start)]`
+- DOM lookup and control event binding
+- pointer-event coordinate conversion
+- `requestAnimationFrame`
+- Canvas2D rendering from `app-core` view models
+- DOM packet elements, stats, and wire-log updates
+
 ### App boundary
 
-The demo uses `wasm-bindgen` and `web-sys` only at the browser host boundary:
+The browser demo uses `wasm-bindgen` and `web-sys` only at the host boundary:
 
 - startup via `#[wasm_bindgen(start)]`
 - DOM lookup and control event binding
@@ -684,7 +704,7 @@ The demo uses `wasm-bindgen` and `web-sys` only at the browser host boundary:
 - `requestAnimationFrame`
 - `CanvasRenderingContext2d` drawing
 
-CRDT state is not mediated through a JavaScript-facing document wrapper. The demo crate uses the same Rust API as native callers:
+CRDT state is not mediated through a JavaScript-facing document wrapper. `app-core` uses the same Rust API as native callers:
 
 ```rust
 Document
@@ -697,19 +717,11 @@ StrokeProperties
 ToolKind
 ```
 
-### Demo state
-
-The Rust demo owns:
-
-- two `Document`s, one for Alice and one for Bob
-- one `CausalBuffer` per peer
-- live in-progress strokes
-- simulated packet queues and in-flight packet animation state
-- wire-log and statistics state
-
 ### Rendering path
 
-Rendering is Rust-driven but uses browser Canvas2D as the raster backend. Each frame, the demo walks visible stroke IDs and renders directly from core document state:
+Rendering is host-driven. `app-core` exposes platform-neutral stroke and packet views; `wasm_demo` renders those views with browser Canvas2D. A future native demo can render the same views with a native renderer.
+
+Internally, `app-core` builds stroke views from core document state:
 
 ```rust
 for id in doc.visible_stroke_ids() {
@@ -955,14 +967,15 @@ Snapshots are large (all points + properties for all strokes). Compressing the s
 
 ### Integration
 
-1. Add Playwright coverage for `wasm_demo` multi-peer interactions
-2. Implement server-side MVV broadcast: compute `min_version = min(all_peers)` periodically and broadcast to all clients
-3. Enable `compress` feature for updates > 200B
+1. Add a native demo host that reuses `crates/app-core`
+2. Add Playwright coverage for `wasm_demo` multi-peer interactions
+3. Implement server-side MVV broadcast: compute `min_version = min(all_peers)` periodically and broadcast to all clients
+4. Enable `compress` feature for updates > 200B
 
 ### Future improvements
 
-4. **`VecDeque` for undo_stack**: O(1) pop_front
-5. **Property undo**: separate stack of `(StrokeId, PropertySnapshot)` for undoing style changes
+5. **`VecDeque` for undo_stack**: O(1) pop_front
+6. **Property undo**: separate stack of `(StrokeId, PropertySnapshot)` for undoing style changes
 8. **Groups/layers**: new layer CRDT primitive (RGA of layers, each layer has an RGA of strokes)
 9. **Snapshot compression**: LZ4 of the full blob before sending
 10. **Formal benchmarks**: `criterion` benchmarks for `integrate`, `encode_snapshot`, `build_render_data_viewport`

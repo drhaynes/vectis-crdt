@@ -1,11 +1,10 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use vectis_crdt::causal_buffer::CausalBuffer;
-use vectis_crdt::document::Document;
-use vectis_crdt::encoding::{decode_update, encode_update};
-use vectis_crdt::stroke::{StrokeData, StrokePoint, StrokeProperties, ToolKind};
-use vectis_crdt::types::{ActorId, OpId};
+use app_core::{
+    ALICE_COLOR, AppEvent, AppPoint, BOB_COLOR, DemoApp, Direction, PacketStatus, Peer, StrokeView,
+};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
@@ -14,17 +13,11 @@ use web_sys::{
     HtmlElement, HtmlInputElement, PointerEvent, Window,
 };
 
-const ALICE_ACTOR: u64 = 1;
-const BOB_ACTOR: u64 = 2;
-const ALICE_COLOR: u32 = 0xa78bfaff;
-const BOB_COLOR: u32 = 0x60a5fbff;
-const MAX_LOG: usize = 10;
-
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
 
-    let app = Rc::new(RefCell::new(DemoApp::new()?));
+    let app = Rc::new(RefCell::new(BrowserApp::new()?));
     bind_canvas(&app, "canvas-alice", Peer::Alice, ALICE_COLOR)?;
     bind_canvas(&app, "canvas-bob", Peer::Bob, BOB_COLOR)?;
     bind_controls(&app)?;
@@ -33,117 +26,32 @@ pub fn start() -> Result<(), JsValue> {
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Peer {
-    Alice,
-    Bob,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Direction {
-    AliceToBob,
-    BobToAlice,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PacketStatus {
-    Inflight,
-    Delivered,
-    Queued,
-}
-
-struct PeerDoc {
-    doc: Document,
-    buffer: CausalBuffer,
-}
-
-impl PeerDoc {
-    fn new(actor_id: u64) -> Self {
-        Self {
-            doc: Document::new(ActorId(actor_id)),
-            buffer: CausalBuffer::new(),
-        }
-    }
-}
-
-struct LiveStroke {
-    color: u32,
-    points: Vec<StrokePoint>,
-}
-
-struct QueuedPacket {
-    direction: Direction,
-    payload: Vec<u8>,
-}
-
-struct InflightPacket {
-    id: u32,
-    start_time: f64,
-    duration: f64,
-    direction: Direction,
-    payload: Vec<u8>,
-    el: HtmlElement,
-}
-
-struct WireEntry {
-    id: Option<u32>,
-    direction: Direction,
-    bytes: usize,
-    hex: String,
-    status: PacketStatus,
-}
-
-struct DemoApp {
-    alice: PeerDoc,
-    bob: PeerDoc,
+struct BrowserApp {
+    app: DemoApp,
     alice_ctx: CanvasRenderingContext2d,
     bob_ctx: CanvasRenderingContext2d,
-    network_delay: u32,
-    disconnected: bool,
-    queued: Vec<QueuedPacket>,
-    inflight: Vec<InflightPacket>,
-    next_packet_id: u32,
-    total_packets: u32,
-    total_bytes: usize,
-    alice_bytes: usize,
-    bob_bytes: usize,
-    wire_log: Vec<WireEntry>,
-    live_alice: Option<LiveStroke>,
-    live_bob: Option<LiveStroke>,
+    packet_elements: BTreeMap<u32, HtmlElement>,
 }
 
-impl DemoApp {
+impl BrowserApp {
     fn new() -> Result<Self, JsValue> {
         Ok(Self {
-            alice: PeerDoc::new(ALICE_ACTOR),
-            bob: PeerDoc::new(BOB_ACTOR),
+            app: DemoApp::new(),
             alice_ctx: canvas_context("canvas-alice")?,
             bob_ctx: canvas_context("canvas-bob")?,
-            network_delay: 500,
-            disconnected: false,
-            queued: Vec::new(),
-            inflight: Vec::new(),
-            next_packet_id: 0,
-            total_packets: 0,
-            total_bytes: 0,
-            alice_bytes: 0,
-            bob_bytes: 0,
-            wire_log: Vec::new(),
-            live_alice: None,
-            live_bob: None,
+            packet_elements: BTreeMap::new(),
         })
     }
 
-    fn frame(&mut self, now: f64) {
+    fn frame(&mut self, now_ms: f64) {
+        let events = self.app.tick(now_ms);
+        self.handle_events(events);
         self.render_peer(Peer::Alice);
         self.render_peer(Peer::Bob);
-        self.tick_packets(now);
+        self.render_packets(now_ms);
         self.update_stats();
-    }
-
-    fn reset_docs(&mut self) {
-        self.alice = PeerDoc::new(ALICE_ACTOR);
-        self.bob = PeerDoc::new(BOB_ACTOR);
+        self.update_network_controls();
+        self.render_log();
     }
 
     fn pointer_down(
@@ -153,202 +61,25 @@ impl DemoApp {
         event: &PointerEvent,
         color: u32,
     ) {
-        let point = pointer_pos(canvas, event);
-        let stroke = LiveStroke {
-            color,
-            points: vec![point],
-        };
-        match peer {
-            Peer::Alice => self.live_alice = Some(stroke),
-            Peer::Bob => self.live_bob = Some(stroke),
-        }
+        self.app
+            .begin_stroke(peer, pointer_pos(canvas, event), color);
     }
 
     fn pointer_move(&mut self, peer: Peer, canvas: &HtmlCanvasElement, event: &PointerEvent) {
-        let point = pointer_pos(canvas, event);
-        match peer {
-            Peer::Alice => {
-                if let Some(stroke) = &mut self.live_alice {
-                    stroke.points.push(point);
-                }
-            }
-            Peer::Bob => {
-                if let Some(stroke) = &mut self.live_bob {
-                    stroke.points.push(point);
-                }
-            }
-        }
+        self.app.extend_stroke(peer, pointer_pos(canvas, event));
     }
 
     fn pointer_up(&mut self, peer: Peer) {
-        let stroke = match peer {
-            Peer::Alice => self.live_alice.take(),
-            Peer::Bob => self.live_bob.take(),
-        };
-
-        if let Some(stroke) = stroke
-            && stroke.points.len() >= 2
-        {
-            self.commit(peer, stroke);
-        }
+        let events = self.app.end_stroke(peer);
+        self.handle_events(events);
     }
 
     fn pointer_cancel(&mut self, peer: Peer) {
-        match peer {
-            Peer::Alice => self.live_alice = None,
-            Peer::Bob => self.live_bob = None,
-        }
-    }
-
-    fn commit(&mut self, peer: Peer, stroke: LiveStroke) {
-        let data = StrokeData::new(stroke.points.into_boxed_slice(), ToolKind::Pen);
-        let props = StrokeProperties::new(stroke.color, 3.0, 1.0, OpId::ZERO);
-        self.peer_mut(peer).doc.insert_stroke(data, props);
-        self.flush(peer);
-    }
-
-    fn flush(&mut self, peer: Peer) {
-        let ops = self.peer_mut(peer).doc.take_pending_ops();
-        if ops.is_empty() {
-            return;
-        }
-
-        let payload = encode_update(&ops);
-        self.send_packet(peer, payload);
-    }
-
-    fn send_packet(&mut self, from_peer: Peer, payload: Vec<u8>) {
-        let direction = match from_peer {
-            Peer::Alice => Direction::AliceToBob,
-            Peer::Bob => Direction::BobToAlice,
-        };
-        let hex = hex_prefix(&payload);
-        let bytes = payload.len();
-
-        self.total_bytes += bytes;
-        match from_peer {
-            Peer::Alice => self.alice_bytes += bytes,
-            Peer::Bob => self.bob_bytes += bytes,
-        }
-
-        if self.disconnected {
-            self.queued.push(QueuedPacket { direction, payload });
-            self.log_entry(direction, bytes, hex, PacketStatus::Queued, None);
-            return;
-        }
-
-        self.next_packet_id += 1;
-        let id = self.next_packet_id;
-        let duration = f64::from(self.network_delay.max(30));
-        self.log_entry(direction, bytes, hex, PacketStatus::Inflight, Some(id));
-
-        if let Ok(el) = make_packet_el(id, direction, bytes) {
-            self.inflight.push(InflightPacket {
-                id,
-                start_time: now(),
-                duration,
-                direction,
-                payload,
-                el,
-            });
-        } else {
-            self.apply_to_target(direction, &payload);
-            self.total_packets += 1;
-            self.mark_log(id, PacketStatus::Delivered);
-        }
-    }
-
-    fn tick_packets(&mut self, now_ms: f64) {
-        let width = element_width("packets-area").unwrap_or(150.0);
-        let height = element_height("packets-area").unwrap_or(320.0);
-        let cy = height / 2.0;
-        let mut delivered = Vec::new();
-
-        for (idx, packet) in self.inflight.iter_mut().enumerate() {
-            let t = ((now_ms - packet.start_time) / packet.duration).clamp(0.0, 1.0);
-            let x = match packet.direction {
-                Direction::AliceToBob => t * (width - 34.0),
-                Direction::BobToAlice => (1.0 - t) * (width - 34.0),
-            };
-            let opacity = if t < 0.15 {
-                t / 0.15
-            } else if t > 0.85 {
-                (1.0 - t) / 0.15
-            } else {
-                1.0
-            };
-
-            let style = packet.el.style();
-            let _ = style.set_property("left", &format!("{}px", x));
-            let _ = style.set_property("top", &format!("{}px", cy));
-            let _ = style.set_property("opacity", &opacity.to_string());
-
-            if t >= 1.0 {
-                delivered.push(idx);
-            }
-        }
-
-        for idx in delivered.into_iter().rev() {
-            let packet = self.inflight.remove(idx);
-            packet.el.remove();
-            self.apply_to_target(packet.direction, &packet.payload);
-            self.total_packets += 1;
-            self.mark_log(packet.id, PacketStatus::Delivered);
-        }
-    }
-
-    fn apply_to_target(&mut self, direction: Direction, payload: &[u8]) {
-        let peer = match direction {
-            Direction::AliceToBob => &mut self.bob,
-            Direction::BobToAlice => &mut self.alice,
-        };
-
-        if let Ok(ops) = decode_update(payload) {
-            for op in ops {
-                let _ = peer.doc.apply_remote_buffered(op, &mut peer.buffer);
-            }
-        }
-    }
-
-    fn sync_now(&mut self) {
-        let queued = std::mem::take(&mut self.queued);
-        for packet in queued {
-            self.apply_to_target(packet.direction, &packet.payload);
-            self.total_packets += 1;
-        }
-
-        for entry in &mut self.wire_log {
-            if entry.status == PacketStatus::Queued {
-                entry.status = PacketStatus::Delivered;
-            }
-        }
-        self.render_log();
-    }
-
-    fn undo(&mut self, peer: Peer) {
-        if self.peer_mut(peer).doc.undo_last_stroke().is_some() {
-            self.flush(peer);
-        }
-    }
-
-    fn clear_all(&mut self) {
-        self.queued.clear();
-        for packet in self.inflight.drain(..) {
-            packet.el.remove();
-        }
-        self.total_packets = 0;
-        self.total_bytes = 0;
-        self.alice_bytes = 0;
-        self.bob_bytes = 0;
-        self.wire_log.clear();
-        self.live_alice = None;
-        self.live_bob = None;
-        self.reset_docs();
-        self.render_log();
+        self.app.cancel_stroke(peer);
     }
 
     fn set_network_delay(&mut self, delay: u32) {
-        self.network_delay = delay;
+        self.app.set_network_delay(delay);
         let label = if delay == 0 {
             "0ms (instant)".to_string()
         } else {
@@ -358,53 +89,58 @@ impl DemoApp {
     }
 
     fn toggle_disconnect(&mut self) {
-        self.disconnected = !self.disconnected;
+        self.app.toggle_disconnect();
         self.update_network_controls();
     }
 
     fn reconnect_and_sync(&mut self) {
-        self.disconnected = false;
-        self.sync_now();
+        self.app.reconnect_and_sync();
         self.update_network_controls();
+        self.render_log();
     }
 
-    fn update_network_controls(&self) {
-        if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-disconnect") {
-            btn.set_text_content(Some(if self.disconnected {
-                "Reconnect"
-            } else {
-                "Disconnect"
-            }));
-            btn.set_class_name(if self.disconnected {
-                "btn active"
-            } else {
-                "btn"
-            });
+    fn undo(&mut self, peer: Peer) {
+        let events = self.app.undo(peer);
+        self.handle_events(events);
+    }
+
+    fn clear_all(&mut self) {
+        let events = self.app.clear_all();
+        self.handle_events(events);
+        self.render_log();
+    }
+
+    fn handle_events(&mut self, events: Vec<AppEvent>) {
+        for event in events {
+            match event {
+                AppEvent::PacketCreated {
+                    id,
+                    direction,
+                    bytes,
+                } => {
+                    self.app.set_packet_start_time(id, now());
+                    if let Ok(el) = make_packet_el(id, direction, bytes) {
+                        self.packet_elements.insert(id, el);
+                    }
+                }
+                AppEvent::PacketDelivered { id } => {
+                    if let Some(el) = self.packet_elements.remove(&id) {
+                        el.remove();
+                    }
+                }
+                AppEvent::ClearPackets => {
+                    for (_, el) in std::mem::take(&mut self.packet_elements) {
+                        el.remove();
+                    }
+                }
+            }
         }
-        if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-sync") {
-            btn.set_disabled(!self.disconnected);
-        }
-        if let Ok(dot) = element_by_id::<HtmlElement>("status-dot") {
-            dot.set_class_name(if self.disconnected {
-                "status-dot off"
-            } else {
-                "status-dot"
-            });
-        }
-        set_text(
-            "status-text",
-            if self.disconnected {
-                "disconnected"
-            } else {
-                "connected"
-            },
-        );
     }
 
     fn render_peer(&self, peer: Peer) {
-        let (ctx, peer_doc, live) = match peer {
-            Peer::Alice => (&self.alice_ctx, &self.alice, &self.live_alice),
-            Peer::Bob => (&self.bob_ctx, &self.bob, &self.live_bob),
+        let ctx = match peer {
+            Peer::Alice => &self.alice_ctx,
+            Peer::Bob => &self.bob_ctx,
         };
 
         if let Some(canvas) = ctx.canvas() {
@@ -416,129 +152,146 @@ impl DemoApp {
             );
         }
 
-        for id in peer_doc.doc.visible_stroke_ids() {
-            if let Some((data, props)) = peer_doc.doc.get_stroke(&id) {
-                draw_stroke(
-                    ctx,
-                    &data.points,
-                    props.color.value,
-                    props.stroke_width.value,
-                    props.opacity.value,
-                );
-            }
+        for stroke in self.app.strokes(peer) {
+            draw_stroke(ctx, &stroke);
         }
 
-        if let Some(stroke) = live {
-            draw_stroke(ctx, &stroke.points, stroke.color, 3.0, 0.65);
+        if let Some(stroke) = self.app.live_stroke(peer) {
+            draw_stroke(ctx, &stroke);
+        }
+    }
+
+    fn render_packets(&self, now_ms: f64) {
+        let width = element_width("packets-area").unwrap_or(150.0);
+        let height = element_height("packets-area").unwrap_or(320.0);
+        let cy = height / 2.0;
+
+        for packet in self.app.packet_views(now_ms) {
+            let Some(el) = self.packet_elements.get(&packet.id) else {
+                continue;
+            };
+            let x = match packet.direction {
+                Direction::AliceToBob => packet.progress * (width - 34.0),
+                Direction::BobToAlice => (1.0 - packet.progress) * (width - 34.0),
+            };
+            let style = el.style();
+            let _ = style.set_property("left", &format!("{}px", x));
+            let _ = style.set_property("top", &format!("{}px", cy));
+            let _ = style.set_property("opacity", &packet.opacity.to_string());
         }
     }
 
     fn update_stats(&self) {
-        let av = self.alice.doc.visible_stroke_ids().len();
-        let bv = self.bob.doc.visible_stroke_ids().len();
-        let aq = self
-            .queued
-            .iter()
-            .filter(|p| p.direction == Direction::AliceToBob)
-            .count();
-        let bq = self
-            .queued
-            .iter()
-            .filter(|p| p.direction == Direction::BobToAlice)
-            .count();
+        let stats = self.app.stats();
+        let network = self.app.network_state();
 
-        set_text("alice-visible", &av.to_string());
-        set_text("alice-queue", &aq.to_string());
-        set_text("alice-undo", &self.alice.doc.undo_depth().to_string());
-        set_text("alice-bytes", &fmt_bytes(self.alice_bytes));
-        set_text("bob-visible", &bv.to_string());
-        set_text("bob-queue", &bq.to_string());
-        set_text("bob-undo", &self.bob.doc.undo_depth().to_string());
-        set_text("bob-bytes", &fmt_bytes(self.bob_bytes));
-        set_text("total-packets", &self.total_packets.to_string());
-        set_text("total-bytes", &fmt_bytes(self.total_bytes));
+        set_text("alice-visible", &stats.alice_visible.to_string());
+        set_text("alice-queue", &stats.alice_queued.to_string());
+        set_text("alice-undo", &stats.alice_undo_depth.to_string());
+        set_text("alice-bytes", &fmt_bytes(stats.alice_bytes));
+        set_text("bob-visible", &stats.bob_visible.to_string());
+        set_text("bob-queue", &stats.bob_queued.to_string());
+        set_text("bob-undo", &stats.bob_undo_depth.to_string());
+        set_text("bob-bytes", &fmt_bytes(stats.bob_bytes));
+        set_text("total-packets", &stats.total_packets.to_string());
+        set_text("total-bytes", &fmt_bytes(stats.total_bytes));
         set_text(
             "badge-alice",
-            &format!("{} stroke{}", av, if av == 1 { "" } else { "s" }),
+            &format!(
+                "{} stroke{}",
+                stats.alice_visible,
+                if stats.alice_visible == 1 { "" } else { "s" }
+            ),
         );
         set_text(
             "badge-bob",
-            &format!("{} stroke{}", bv, if bv == 1 { "" } else { "s" }),
+            &format!(
+                "{} stroke{}",
+                stats.bob_visible,
+                if stats.bob_visible == 1 { "" } else { "s" }
+            ),
         );
-        let net_label = if self.network_delay == 0 {
+        let label = if network.delay_ms == 0 {
             "instant".to_string()
         } else {
-            format!("{}ms", self.network_delay)
+            format!("{}ms", network.delay_ms)
         };
-        set_text("delay-net-label", &net_label);
+        set_text("delay-net-label", &label);
     }
 
-    fn log_entry(
-        &mut self,
-        direction: Direction,
-        bytes: usize,
-        hex: String,
-        status: PacketStatus,
-        id: Option<u32>,
-    ) {
-        self.wire_log.insert(
-            0,
-            WireEntry {
-                id,
-                direction,
-                bytes,
-                hex,
-                status,
+    fn update_network_controls(&self) {
+        let network = self.app.network_state();
+        if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-disconnect") {
+            btn.set_text_content(Some(if network.disconnected {
+                "Reconnect"
+            } else {
+                "Disconnect"
+            }));
+            btn.set_class_name(if network.disconnected {
+                "btn active"
+            } else {
+                "btn"
+            });
+        }
+        if let Ok(btn) = element_by_id::<HtmlButtonElement>("btn-sync") {
+            btn.set_disabled(!network.disconnected);
+        }
+        if let Ok(dot) = element_by_id::<HtmlElement>("status-dot") {
+            dot.set_class_name(if network.disconnected {
+                "status-dot off"
+            } else {
+                "status-dot"
+            });
+        }
+        set_text(
+            "status-text",
+            if network.disconnected {
+                "disconnected"
+            } else {
+                "connected"
             },
         );
-        if self.wire_log.len() > MAX_LOG {
-            self.wire_log.pop();
-        }
-        self.render_log();
-    }
-
-    fn mark_log(&mut self, id: u32, status: PacketStatus) {
-        if let Some(entry) = self.wire_log.iter_mut().find(|entry| entry.id == Some(id)) {
-            entry.status = status;
-            self.render_log();
-        }
     }
 
     fn render_log(&self) {
-        let html = self.wire_log.iter().map(|entry| {
-            let dir_class = match entry.direction { Direction::AliceToBob => "ab", Direction::BobToAlice => "ba" };
-            let dir_label = match entry.direction { Direction::AliceToBob => "A-&gt;B", Direction::BobToAlice => "B-&gt;A" };
-            let status_class = match entry.status {
-                PacketStatus::Inflight => "inflight",
-                PacketStatus::Delivered => "delivered",
-                PacketStatus::Queued => "queued",
-            };
-            let status_label = match entry.status {
-                PacketStatus::Inflight => "in-flight",
-                PacketStatus::Delivered => "delivered",
-                PacketStatus::Queued => "queued",
-            };
-            format!(
-                "<div class=\"log-entry\"><span class=\"log-dir {dir_class}\">{dir_label}</span><span class=\"log-hex\">{} ...</span><span class=\"log-bytes\">{}B</span><span class=\"log-tag {status_class}\">{status_label}</span></div>",
-                entry.hex, entry.bytes,
-            )
-        }).collect::<String>();
+        let html = self
+            .app
+            .wire_log()
+            .iter()
+            .map(|entry| {
+                let dir_class = match entry.direction {
+                    Direction::AliceToBob => "ab",
+                    Direction::BobToAlice => "ba",
+                };
+                let dir_label = match entry.direction {
+                    Direction::AliceToBob => "A-&gt;B",
+                    Direction::BobToAlice => "B-&gt;A",
+                };
+                let status_class = match entry.status {
+                    PacketStatus::Inflight => "inflight",
+                    PacketStatus::Delivered => "delivered",
+                    PacketStatus::Queued => "queued",
+                };
+                let status_label = match entry.status {
+                    PacketStatus::Inflight => "in-flight",
+                    PacketStatus::Delivered => "delivered",
+                    PacketStatus::Queued => "queued",
+                };
+                format!(
+                    "<div class=\"log-entry\"><span class=\"log-dir {dir_class}\">{dir_label}</span><span class=\"log-hex\">{} ...</span><span class=\"log-bytes\">{}B</span><span class=\"log-tag {status_class}\">{status_label}</span></div>",
+                    entry.hex, entry.bytes,
+                )
+            })
+            .collect::<String>();
 
         if let Ok(el) = element_by_id::<HtmlElement>("wire-log-entries") {
             el.set_inner_html(&html);
         }
     }
-
-    fn peer_mut(&mut self, peer: Peer) -> &mut PeerDoc {
-        match peer {
-            Peer::Alice => &mut self.alice,
-            Peer::Bob => &mut self.bob,
-        }
-    }
 }
 
 fn bind_canvas(
-    app: &Rc<RefCell<DemoApp>>,
+    app: &Rc<RefCell<BrowserApp>>,
     id: &str,
     peer: Peer,
     color: u32,
@@ -597,7 +350,7 @@ fn bind_canvas(
     Ok(())
 }
 
-fn bind_controls(app: &Rc<RefCell<DemoApp>>) -> Result<(), JsValue> {
+fn bind_controls(app: &Rc<RefCell<BrowserApp>>) -> Result<(), JsValue> {
     {
         let slider = element_by_id::<HtmlInputElement>("delay-slider")?;
         let slider_for_handler = slider.clone();
@@ -619,9 +372,9 @@ fn bind_controls(app: &Rc<RefCell<DemoApp>>) -> Result<(), JsValue> {
     Ok(())
 }
 
-fn bind_button<F>(app: &Rc<RefCell<DemoApp>>, id: &str, mut f: F) -> Result<(), JsValue>
+fn bind_button<F>(app: &Rc<RefCell<BrowserApp>>, id: &str, mut f: F) -> Result<(), JsValue>
 where
-    F: 'static + FnMut(&mut DemoApp),
+    F: 'static + FnMut(&mut BrowserApp),
 {
     let button = element_by_id::<HtmlButtonElement>(id)?;
     let app = Rc::clone(app);
@@ -633,7 +386,7 @@ where
     Ok(())
 }
 
-fn start_loop(app: Rc<RefCell<DemoApp>>) -> Result<(), JsValue> {
+fn start_loop(app: Rc<RefCell<BrowserApp>>) -> Result<(), JsValue> {
     let raf = Rc::new(RefCell::new(None::<Closure<dyn FnMut(f64)>>));
     let raf_for_closure = Rc::clone(&raf);
 
@@ -651,39 +404,33 @@ fn start_loop(app: Rc<RefCell<DemoApp>>) -> Result<(), JsValue> {
     Ok(())
 }
 
-fn draw_stroke(
-    ctx: &CanvasRenderingContext2d,
-    points: &[StrokePoint],
-    color: u32,
-    width: f32,
-    opacity: f32,
-) {
-    if points.len() < 2 {
+fn draw_stroke(ctx: &CanvasRenderingContext2d, stroke: &StrokeView) {
+    if stroke.points.len() < 2 {
         return;
     }
 
-    let (r, g, b) = u32_rgb(color);
+    let (r, g, b) = u32_rgb(stroke.color);
     ctx.begin_path();
     ctx.set_stroke_style_str(&format!("rgb({},{},{})", r, g, b));
-    ctx.set_line_width(f64::from(width.max(1.0)));
+    ctx.set_line_width(f64::from(stroke.width.max(1.0)));
     ctx.set_line_cap("round");
     ctx.set_line_join("round");
-    ctx.set_global_alpha(f64::from(opacity));
-    ctx.move_to(f64::from(points[0].x), f64::from(points[0].y));
-    for point in &points[1..] {
+    ctx.set_global_alpha(f64::from(stroke.opacity));
+    ctx.move_to(f64::from(stroke.points[0].x), f64::from(stroke.points[0].y));
+    for point in &stroke.points[1..] {
         ctx.line_to(f64::from(point.x), f64::from(point.y));
     }
     ctx.stroke();
     ctx.set_global_alpha(1.0);
 }
 
-fn pointer_pos(canvas: &HtmlCanvasElement, event: &PointerEvent) -> StrokePoint {
+fn pointer_pos(canvas: &HtmlCanvasElement, event: &PointerEvent) -> AppPoint {
     let rect = canvas.get_bounding_client_rect();
     let x =
         (f64::from(event.client_x()) - rect.left()) * (f64::from(canvas.width()) / rect.width());
     let y =
         (f64::from(event.client_y()) - rect.top()) * (f64::from(canvas.height()) / rect.height());
-    StrokePoint::new(x as f32, y as f32, event.pressure().max(0.5))
+    AppPoint::new(x as f32, y as f32, event.pressure().max(0.5))
 }
 
 fn make_packet_el(id: u32, direction: Direction, bytes: usize) -> Result<HtmlElement, JsValue> {
@@ -761,15 +508,6 @@ fn now() -> f64 {
         .and_then(|window| window.performance())
         .map(|performance| performance.now())
         .unwrap_or(0.0)
-}
-
-fn hex_prefix(payload: &[u8]) -> String {
-    payload
-        .iter()
-        .take(7)
-        .map(|byte| format!("{:02x}", byte))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn fmt_bytes(n: usize) -> String {

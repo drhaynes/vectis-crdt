@@ -13,7 +13,8 @@ The repository now contains:
 | Component | Purpose |
 |---------|---------|
 | `crates/vectis-crdt` | Core Rust CRDT library |
-| `crates/wasm_demo` | Rust-owned WebAssembly browser demo using `web-sys` and Canvas2D |
+| `crates/app-core` | Platform-independent demo application logic |
+| `crates/wasm_demo` | Browser host adapter using `web-sys` and Canvas2D |
 
 ---
 
@@ -63,7 +64,7 @@ assert_eq!(doc_a.visible_stroke_ids(), doc_b.visible_stroke_ids());
 
 ## Browser Demo
 
-The browser demo is a separate Rust/Wasm crate. Its JavaScript is only a tiny loader; app state, pointer handling, simulated networking, CRDT operations, and Canvas2D rendering live in Rust.
+The browser demo is split into reusable app logic and browser-specific I/O. `crates/app-core` owns the demo state, simulated networking, CRDT orchestration, and render view models. `crates/wasm_demo` translates browser input/events into `app-core` calls and renders the returned views with Canvas2D.
 
 Build it with:
 
@@ -118,7 +119,7 @@ cargo test
 cargo test --release
 ```
 
-Property tests verify convergence, commutativity, idempotency, delete convergence, causal-buffer convergence, and snapshot round-trip integrity.
+Property tests verify convergence, commutativity, idempotency, delete convergence, causal-buffer convergence, and snapshot round-trip integrity. `app-core` also has behavior tests for demo networking, sync, undo, and reset flows.
 
 ---
 
