@@ -33,6 +33,7 @@ features = [
   "PointerEvent",
   "FileReader",
   "Blob",
+  "Storage",
   "WebSocket",
   "Window",
 ]

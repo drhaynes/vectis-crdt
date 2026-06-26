@@ -105,6 +105,11 @@ impl VectorClock {
         }
     }
 
+    /// Iterate over `(actor, max_lamport_seen)` entries in actor order.
+    pub fn iter(&self) -> impl Iterator<Item = (ActorId, u64)> + '_ {
+        self.clocks.iter().map(|(&actor, &ts)| (actor, ts))
+    }
+
     /// Compute operations that `other` has NOT seen yet.
     /// Returns ranges `(actor, from_inclusive, to_inclusive)`.
     pub fn diff(&self, other: &VectorClock) -> Vec<(ActorId, u64, u64)> {

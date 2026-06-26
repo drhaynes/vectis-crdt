@@ -68,3 +68,24 @@ pub(crate) fn websocket_url(room: &str) -> Result<String, JsValue> {
         .unwrap_or_else(|| "localhost".to_string());
     Ok(format!("{protocol}://{host}:3000/ws?room={room}"))
 }
+
+pub(crate) fn resume_token_from_storage(room: &str) -> String {
+    web_window()
+        .ok()
+        .and_then(|window| window.local_storage().ok().flatten())
+        .and_then(|storage| storage.get_item(&storage_key(room)).ok().flatten())
+        .unwrap_or_default()
+}
+
+pub(crate) fn store_resume_token(room: &str, token: &str) {
+    if token.is_empty() {
+        return;
+    }
+    if let Ok(Some(storage)) = web_window().and_then(|window| window.local_storage()) {
+        let _ = storage.set_item(&storage_key(room), token);
+    }
+}
+
+fn storage_key(room: &str) -> String {
+    format!("vectis.resume.{room}")
+}

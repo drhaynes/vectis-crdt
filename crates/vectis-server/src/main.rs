@@ -9,9 +9,13 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{Mutex, mpsc};
+use vectis_crdt::awareness::decode_cursor;
 use vectis_crdt::causal_buffer::CausalBuffer;
-use vectis_crdt::document::Document;
-use vectis_crdt::encoding::{decode_update, decode_vector_clock, encode_snapshot};
+use vectis_crdt::document::{Document, Operation};
+use vectis_crdt::encoding::{
+    decode_update, decode_vector_clock, encode_snapshot, encode_state_vector, encode_update,
+};
+use vectis_crdt::gc::GcConfig;
 use vectis_crdt::types::{ActorId, VectorClock};
 use vectis_protocol::{ProtocolMessage, decode_message, encode_message};
 
@@ -25,8 +29,12 @@ struct ServerState {
 struct RoomState {
     doc: Document,
     buffer: CausalBuffer,
+    op_log: Vec<Operation>,
+    op_log_base: VectorClock,
     clients: HashMap<ActorId, ClientState>,
+    sessions: HashMap<String, ActorId>,
     next_actor: u64,
+    next_token: u64,
 }
 
 struct ClientState {
@@ -99,14 +107,18 @@ async fn handle_socket(socket: WebSocket, state: ServerState, room_hint: Option<
         Some(Err(_)) | None => return,
     };
 
-    let (room_name, state_vector) = match hello {
-        Ok(ProtocolMessage::ClientHello { room, state_vector }) => {
+    let (room_name, resume_token, state_vector) = match hello {
+        Ok(ProtocolMessage::ClientHello {
+            room,
+            resume_token,
+            state_vector,
+        }) => {
             let room = if room.is_empty() {
                 room_hint.unwrap_or_else(|| "demo".to_string())
             } else {
                 room
             };
-            (room, state_vector)
+            (room, resume_token, state_vector)
         }
         Ok(_) => {
             send_error(&client_tx, "first frame must be ClientHello");
@@ -118,9 +130,10 @@ async fn handle_socket(socket: WebSocket, state: ServerState, room_hint: Option<
         }
     };
 
-    let (actor, color, snapshot) = join_room(
+    let (actor, color, resume_token, sync_message) = join_room(
         &state,
         &room_name,
+        resume_token,
         client_tx.clone(),
         decode_vector_clock(&state_vector),
     )
@@ -129,10 +142,9 @@ async fn handle_socket(socket: WebSocket, state: ServerState, room_hint: Option<
     let _ = client_tx.send(encode_message(&ProtocolMessage::ServerWelcome {
         actor,
         color,
+        resume_token,
     }));
-    let _ = client_tx.send(encode_message(&ProtocolMessage::Snapshot {
-        bytes: snapshot,
-    }));
+    let _ = client_tx.send(encode_message(&sync_message));
 
     while let Some(message) = socket_rx.next().await {
         match message {
@@ -152,25 +164,25 @@ async fn handle_socket(socket: WebSocket, state: ServerState, room_hint: Option<
 async fn join_room(
     state: &ServerState,
     room_name: &str,
+    resume_token: String,
     sender: mpsc::UnboundedSender<Vec<u8>>,
     version: VectorClock,
-) -> (ActorId, u32, Vec<u8>) {
+) -> (ActorId, u32, String, ProtocolMessage) {
     let mut rooms = state.rooms.lock().await;
     let room = rooms
         .entry(room_name.to_string())
         .or_insert_with(RoomState::new);
 
-    let actor = ActorId(room.next_actor);
-    room.next_actor += 1;
+    let (actor, resume_token) = room.resolve_session(resume_token);
     let color = actor_color(actor);
-    let snapshot = encode_snapshot(&room.doc);
+    let sync_message = room.sync_message(&version);
     room.clients.insert(actor, ClientState { sender, version });
     println!(
         "room={room_name} actor={} joined clients={}",
         actor.0,
         room.clients.len()
     );
-    (actor, color, snapshot)
+    (actor, color, resume_token, sync_message)
 }
 
 async fn process_client_frame(
@@ -225,11 +237,86 @@ async fn process_client_frame(
                         return;
                     }
                 }
-
                 if let Some(client) = room.clients.get_mut(&actor) {
-                    client.version = room.doc.version.clone();
+                    for op in &ops {
+                        let op_id = op.id();
+                        client.version.advance(op_id.actor, op_id.lamport.0);
+                    }
                 }
+                room.op_log.extend(ops);
 
+                let update_recipients = room
+                    .clients
+                    .iter()
+                    .filter_map(|(client_actor, client)| {
+                        if *client_actor == actor {
+                            None
+                        } else {
+                            Some(client.sender.clone())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                let mvv_frame = room.compute_mvv_frame();
+                let mvv_recipients = mvv_frame
+                    .as_ref()
+                    .map(|frame| {
+                        room.clients
+                            .values()
+                            .map(|client| (client.sender.clone(), frame.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                (update_recipients, mvv_recipients)
+            };
+
+            for recipient in recipients.0 {
+                let _ = recipient.send(frame.clone());
+            }
+            for (recipient, mvv_frame) in recipients.1 {
+                let _ = recipient.send(mvv_frame);
+            }
+        }
+        ProtocolMessage::StateVector { bytes } => {
+            let version = decode_vector_clock(&bytes);
+            let mvv_recipients = {
+                let mut rooms = state.rooms.lock().await;
+                let Some(room) = rooms.get_mut(room_name) else {
+                    send_error(sender, "room no longer exists");
+                    return;
+                };
+                if let Some(client) = room.clients.get_mut(&actor) {
+                    client.version = version;
+                }
+                room.compute_mvv_frame()
+                    .map(|frame| {
+                        room.clients
+                            .values()
+                            .map(|client| (client.sender.clone(), frame.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            };
+            for (recipient, mvv_frame) in mvv_recipients {
+                let _ = recipient.send(mvv_frame);
+            }
+        }
+        ProtocolMessage::Awareness { bytes } => {
+            let Some(cursor) = decode_cursor(&bytes) else {
+                send_error(sender, "malformed awareness frame");
+                return;
+            };
+            if cursor.actor != actor {
+                send_error(sender, "awareness actor does not match session actor");
+                return;
+            }
+            let recipients = {
+                let rooms = state.rooms.lock().await;
+                let Some(room) = rooms.get(room_name) else {
+                    send_error(sender, "room no longer exists");
+                    return;
+                };
                 room.clients
                     .iter()
                     .filter_map(|(client_actor, client)| {
@@ -241,18 +328,8 @@ async fn process_client_frame(
                     })
                     .collect::<Vec<_>>()
             };
-
             for recipient in recipients {
                 let _ = recipient.send(frame.clone());
-            }
-        }
-        ProtocolMessage::StateVector { bytes } => {
-            let version = decode_vector_clock(&bytes);
-            let mut rooms = state.rooms.lock().await;
-            if let Some(room) = rooms.get_mut(room_name)
-                && let Some(client) = room.clients.get_mut(&actor)
-            {
-                client.version = version;
             }
         }
         _ => send_error(sender, "unexpected client frame"),
@@ -290,12 +367,150 @@ impl RoomState {
         Self {
             doc: Document::new(ActorId(0)),
             buffer: CausalBuffer::new(),
+            op_log: Vec::new(),
+            op_log_base: VectorClock::new(),
             clients: HashMap::new(),
+            sessions: HashMap::new(),
             next_actor: 1,
+            next_token: 1,
         }
+    }
+
+    fn resolve_session(&mut self, requested_token: String) -> (ActorId, String) {
+        if let Some(&actor) = self.sessions.get(&requested_token)
+            && !requested_token.is_empty()
+            && !self.clients.contains_key(&actor)
+        {
+            return (actor, requested_token);
+        }
+
+        let actor = ActorId(self.next_actor);
+        self.next_actor += 1;
+        let token = format!("r{}-s{}", actor.0, self.next_token);
+        self.next_token += 1;
+        self.sessions.insert(token.clone(), actor);
+        (actor, token)
+    }
+
+    fn sync_message(&self, client_version: &VectorClock) -> ProtocolMessage {
+        if client_version.dominates(&self.op_log_base) {
+            let missing = self
+                .op_log
+                .iter()
+                .filter(|op| client_version.get(op.id().actor) < op.id().lamport.0)
+                .cloned()
+                .collect::<Vec<_>>();
+            ProtocolMessage::Update {
+                bytes: encode_update(&missing),
+            }
+        } else {
+            ProtocolMessage::Snapshot {
+                bytes: encode_snapshot(&self.doc),
+            }
+        }
+    }
+
+    fn compute_mvv_frame(&mut self) -> Option<Vec<u8>> {
+        let mut versions = self.clients.values().map(|client| client.version.clone());
+        let mut mvv = versions.next()?;
+        for version in versions {
+            let actors = mvv
+                .iter()
+                .chain(version.iter())
+                .map(|(actor, _)| actor)
+                .collect::<std::collections::BTreeSet<_>>();
+            let mut next = VectorClock::new();
+            for actor in actors {
+                next.advance(actor, mvv.get(actor).min(version.get(actor)));
+            }
+            mvv = next;
+        }
+
+        if let Some(result) = self
+            .doc
+            .update_min_version(mvv.clone(), &GcConfig::default())
+            && result.tombstones_removed > 0
+        {
+            self.op_log.clear();
+            self.op_log_base = self.doc.version.clone();
+            println!(
+                "server gc removed {} tombstones generation={}",
+                result.tombstones_removed, result.generation
+            );
+        }
+
+        Some(encode_message(&ProtocolMessage::Mvv {
+            bytes: encode_state_vector(&mvv),
+        }))
     }
 }
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vectis_crdt::stroke::{StrokeData, StrokePoint, StrokeProperties, ToolKind};
+    use vectis_crdt::types::OpId;
+
+    #[test]
+    fn resume_token_reuses_inactive_actor() {
+        let mut room = RoomState::new();
+        let (actor, token) = room.resolve_session(String::new());
+        assert_eq!(actor, ActorId(1));
+
+        let (resumed_actor, resumed_token) = room.resolve_session(token.clone());
+        assert_eq!(resumed_actor, actor);
+        assert_eq!(resumed_token, token);
+    }
+
+    #[test]
+    fn resume_token_does_not_collide_with_active_actor() {
+        let mut room = RoomState::new();
+        let (actor, token) = room.resolve_session(String::new());
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        room.clients.insert(
+            actor,
+            ClientState {
+                sender,
+                version: VectorClock::new(),
+            },
+        );
+
+        let (new_actor, new_token) = room.resolve_session(token);
+        assert_ne!(new_actor, actor);
+        assert_ne!(new_token, String::new());
+    }
+
+    #[test]
+    fn sync_message_uses_op_log_delta_when_available() {
+        let mut source = Document::new(ActorId(9));
+        source.insert_stroke(
+            StrokeData::new(vec![StrokePoint::basic(0.0, 0.0)].into(), ToolKind::Pen),
+            StrokeProperties::new(0xa78bfaff, 3.0, 1.0, OpId::ZERO),
+        );
+        let ops = source.take_pending_ops();
+
+        let mut room = RoomState::new();
+        for op in ops.clone() {
+            room.doc.apply_remote(op.clone());
+            room.op_log.push(op);
+        }
+
+        let message = room.sync_message(&VectorClock::new());
+        let ProtocolMessage::Update { bytes } = message else {
+            panic!("expected update delta");
+        };
+        assert_eq!(decode_update(&bytes).unwrap().len(), ops.len());
+
+        let mut caught_up = VectorClock::new();
+        caught_up.advance(ActorId(9), ops[0].id().lamport.0);
+        let message = room.sync_message(&caught_up);
+        let ProtocolMessage::Update { bytes } = message else {
+            panic!("expected empty update delta");
+        };
+        assert!(decode_update(&bytes).unwrap().is_empty());
+    }
 }
