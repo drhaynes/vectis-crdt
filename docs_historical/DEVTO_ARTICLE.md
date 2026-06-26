@@ -7,7 +7,7 @@
 > - npm/TypeScript package support has been removed.
 > - Python/PyO3 support has been removed.
 > - The old `WasmDocument` / `wasm_bridge.rs` JavaScript-facing API has been removed.
-> - Browser demo rendering now lives primarily in Rust/Wasm in the `crates/wasm_demo` crate using `web-sys` and `CanvasRenderingContext2d`, with only a tiny JS loader.
+> - Browser demo state now lives in `crates/app-core`; `crates/wasm_demo` is a browser host adapter using `web-sys` and `CanvasRenderingContext2d`, with only a tiny JS loader.
 >
 > The CRDT design discussion remains useful background, but packaging, binding, and integration details in this article are no longer authoritative.
 
