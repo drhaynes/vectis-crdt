@@ -1,3 +1,16 @@
+> Historical note:
+>
+> This article describes an earlier direction for `vectis-crdt` where the repository shipped Rust,
+> npm/TypeScript, WebAssembly JavaScript bindings, and Python/PyO3 bindings from the same source tree.
+>
+> The current project direction has changed:
+> - npm/TypeScript package support has been removed.
+> - Python/PyO3 support has been removed.
+> - The old `WasmDocument` / `wasm_bridge.rs` JavaScript-facing API has been removed.
+> - Browser demo rendering now lives primarily in Rust/Wasm in the `wasm_demo` crate using `web-sys` and `CanvasRenderingContext2d`, with only a tiny JS loader.
+>
+> The CRDT design discussion remains useful background, but packaging, binding, and integration details in this article are no longer authoritative.
+
 # How I Built a CRDT Engine for My Collaborative Whiteboard in Rust
 
 > **vectis** (lat.) — arrow, vector.

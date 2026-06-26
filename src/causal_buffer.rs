@@ -159,9 +159,8 @@ impl Document {
 mod tests {
     use super::*;
     use crate::document::{Document, Operation};
-    use crate::rga::{ItemState, RgaItem};
     use crate::stroke::{StrokeData, StrokePoint, StrokeProperties, ToolKind};
-    use crate::types::{ActorId, LamportTs, OpId};
+    use crate::types::{ActorId, OpId};
 
     fn make_doc(actor: u64) -> Document {
         Document::new(ActorId(actor))
@@ -197,7 +196,7 @@ mod tests {
 
         // Now insert arrives — both should apply
         let insert_op = ops.remove(0);
-        let changed = doc.apply_remote_buffered(insert_op, &mut buf).unwrap();
+        let _changed = doc.apply_remote_buffered(insert_op, &mut buf).unwrap();
         assert_eq!(buf.len(), 0, "buffer must be empty after insert");
         assert!(doc.visible_stroke_ids().is_empty(), "stroke deleted");
     }
@@ -223,7 +222,7 @@ mod tests {
         assert_eq!(buf.len(), 1);
 
         // A arrives — both should now apply
-        let changed = doc.apply_remote_buffered(op_a, &mut buf).unwrap();
+        let _changed = doc.apply_remote_buffered(op_a, &mut buf).unwrap();
         assert_eq!(buf.len(), 0);
         assert_eq!(doc.visible_stroke_ids().len(), 2);
         // A must come before B in z-order

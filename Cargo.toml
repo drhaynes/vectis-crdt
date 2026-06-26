@@ -2,7 +2,7 @@
 name = "vectis-crdt"
 version = "0.1.3"
 edition = "2021"
-description = "CRDT library for ordered collections of mutable objects. RGA/YATA sequence for deterministic z-order + LWW-Register per property. Binary wire format, Wasm and Python bindings."
+description = "CRDT library for ordered collections of mutable objects. RGA/YATA sequence for deterministic z-order + LWW-Register per property. Binary wire format."
 license = "MIT"
 repository = "https://github.com/RafaCalRob/vectis-crdt"
 homepage = "https://github.com/RafaCalRob/vectis-crdt"
@@ -12,23 +12,14 @@ categories = ["data-structures", "wasm", "algorithms"]
 authors = ["RafaCalRob"]
 rust-version = "1.70"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [features]
 default  = []
-wasm     = ["wasm-bindgen", "js-sys"]
 compress = ["lz4_flex"]
-python   = ["pyo3"]
 
 [dependencies]
-wasm-bindgen = { version = "0.2", optional = true }
-js-sys       = { version = "0.3", optional = true }
 lz4_flex     = { version = "0.11", optional = true }
-pyo3         = { version = "0.22", features = ["extension-module"], optional = true }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3"
 proptest          = "1"
 
 [profile.release]

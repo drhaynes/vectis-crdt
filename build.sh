@@ -1,37 +1,33 @@
 #!/usr/bin/env bash
-# Build the vectis-crdt Wasm package.
-# Prerequisites: cargo, wasm-pack (https://rustwasm.github.io/wasm-pack/)
+# Build and test vectis-crdt.
+# Prerequisites for demo builds: cargo, wasm-pack (https://rustwasm.github.io/wasm-pack/)
 #
 # Usage:
-#   ./build.sh          # builds release Wasm → pkg/
-#   ./build.sh dev      # builds dev (non-optimised) Wasm → pkg/
 #   ./build.sh test     # runs native unit tests
+#   ./build.sh demo     # builds dev Rust/Wasm browser demo → wasm_demo/pkg/
+#   ./build.sh demo:release # builds release Rust/Wasm browser demo → wasm_demo/pkg/
 
 set -euo pipefail
 
 MODE="${1:-release}"
 
 case "$MODE" in
-  release)
-    echo "Building release Wasm package..."
-    ~/.cargo/bin/wasm-pack build --target web --out-dir pkg --release -- --features wasm
-    echo "Done → pkg/"
-    ;;
-  dev)
-    echo "Building dev Wasm package..."
-    ~/.cargo/bin/wasm-pack build --target web --out-dir pkg --dev -- --features wasm
-    echo "Done → pkg/"
-    ;;
   test)
     echo "Running native unit tests..."
     cargo test
     ;;
-  test-wasm)
-    echo "Running Wasm tests in headless Chrome..."
-    wasm-pack test --headless --chrome
+  demo)
+    echo "Building dev Rust/Wasm browser demo..."
+    (cd wasm_demo && wasm-pack build --target web --out-dir pkg --dev)
+    echo "Done → wasm_demo/pkg/"
+    ;;
+  demo:release)
+    echo "Building release Rust/Wasm browser demo..."
+    (cd wasm_demo && wasm-pack build --target web --out-dir pkg --release)
+    echo "Done → wasm_demo/pkg/"
     ;;
   *)
-    echo "Usage: $0 [release|dev|test|test-wasm]"
+    echo "Usage: $0 [test|demo|demo:release]"
     exit 1
     ;;
 esac
