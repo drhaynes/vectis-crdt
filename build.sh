@@ -14,12 +14,12 @@ MODE="${1:-release}"
 case "$MODE" in
   release)
     echo "Building release Wasm package..."
-    wasm-pack build --target web --out-dir pkg --release
+    ~/.cargo/bin/wasm-pack build --target web --out-dir pkg --release -- --features wasm
     echo "Done → pkg/"
     ;;
   dev)
     echo "Building dev Wasm package..."
-    wasm-pack build --target web --out-dir pkg --dev
+    ~/.cargo/bin/wasm-pack build --target web --out-dir pkg --dev -- --features wasm
     echo "Done → pkg/"
     ;;
   test)

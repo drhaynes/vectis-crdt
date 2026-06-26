@@ -423,7 +423,7 @@ input[type="range"] {
 <p class="hint">Try: disconnect → draw on both → Sync now → watch convergence</p>
 
 <script type="module">
-import { Document } from '../pkg/index.js';
+import init, { WasmDocument } from '../pkg/vectis_crdt.js';
 
 // ── Actor IDs & colors (RRGGBBAA u32) ─────────────────────────────────────────
 const ALICE_ACTOR = 1n;
@@ -459,11 +459,12 @@ const pktArea  = document.getElementById('packets-area');
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 function resetDocs() {
-  aliceDoc = new Document(ALICE_ACTOR);
-  bobDoc   = new Document(BOB_ACTOR);
+  aliceDoc = new WasmDocument(ALICE_ACTOR);
+  bobDoc   = new WasmDocument(BOB_ACTOR);
 }
 
 async function main() {
+  await init();
   resetDocs();
   bindCanvas(cAlice, 'alice', ALICE_COLOR);
   bindCanvas(cBob,   'bob',   BOB_COLOR);
@@ -760,6 +761,7 @@ main().catch(err => {
   document.body.innerHTML = `<div style="color:#f87171;padding:40px;font-family:monospace">
     <strong>Error loading vectis-crdt Wasm:</strong><br><br>${err}<br><br>
     Serve from the <code>vectis-crdt/</code> directory:<br>
+    Expect generated files at <code>/pkg/vectis_crdt.js</code> and <code>/pkg/vectis_crdt_bg.wasm</code><br>
     <code style="color:#a78bfa">python -m http.server 8080</code><br>
     then open <code>http://localhost:8080/demo/</code>
   </div>`;

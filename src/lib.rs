@@ -45,16 +45,16 @@
 //! | [`error`] | `VectisError`, `VectisResult` |
 //! | [`wasm_bridge`] | `WasmDocument`: zero-copy JS API (feature `wasm`) |
 
-pub mod types;
-pub mod rga;
-pub mod stroke;
+pub mod awareness;
+pub mod causal_buffer;
+pub mod compression;
 pub mod document;
-pub mod gc;
 pub mod encoding;
 pub mod error;
-pub mod causal_buffer;
-pub mod awareness;
-pub mod compression;
+pub mod gc;
+pub mod rga;
+pub mod stroke;
+pub mod types;
 
 #[cfg(feature = "wasm")]
 pub mod wasm_bridge;

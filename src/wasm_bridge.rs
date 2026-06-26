@@ -12,8 +12,8 @@ use crate::awareness::{decode_cursor, encode_cursor, AwarenessStore};
 use crate::causal_buffer::CausalBuffer;
 use crate::document::Document;
 use crate::encoding::{
-    decode_op_id, decode_update, decode_vector_clock, encode_op_id, encode_snapshot,
-    encode_state_vector, encode_stroke_ids, encode_update, decode_snapshot,
+    decode_op_id, decode_snapshot, decode_update, decode_vector_clock, encode_op_id,
+    encode_snapshot, encode_state_vector, encode_stroke_ids, encode_update,
 };
 use crate::gc::GcConfig;
 use crate::rga::StrokeId;
@@ -109,22 +109,30 @@ impl WasmDocument {
         let target = decode_op_id(stroke_id);
         match property_key {
             0 => {
-                if value_raw.len() < 4 { return false; }
+                if value_raw.len() < 4 {
+                    return false;
+                }
                 let v = u32::from_le_bytes(value_raw[0..4].try_into().unwrap());
                 self.inner.update_color(target, v)
             }
             1 => {
-                if value_raw.len() < 4 { return false; }
+                if value_raw.len() < 4 {
+                    return false;
+                }
                 let v = f32::from_le_bytes(value_raw[0..4].try_into().unwrap());
                 self.inner.update_stroke_width(target, v)
             }
             2 => {
-                if value_raw.len() < 4 { return false; }
+                if value_raw.len() < 4 {
+                    return false;
+                }
                 let v = f32::from_le_bytes(value_raw[0..4].try_into().unwrap());
                 self.inner.update_opacity(target, v)
             }
             3 => {
-                if value_raw.len() < 24 { return false; }
+                if value_raw.len() < 24 {
+                    return false;
+                }
                 let t = decode_transform_from_bytes(value_raw);
                 self.inner.update_transform(target, t)
             }
@@ -152,7 +160,9 @@ impl WasmDocument {
             match self.inner.apply_remote_buffered(op, &mut self.buffer) {
                 Ok(ids) => {
                     for id in ids {
-                        if !changed.contains(&id) { changed.push(id); }
+                        if !changed.contains(&id) {
+                            changed.push(id);
+                        }
                     }
                 }
                 Err(_) => {
@@ -177,7 +187,9 @@ impl WasmDocument {
     #[wasm_bindgen]
     pub fn encode_pending_update(&mut self) -> Box<[u8]> {
         let ops = self.inner.take_pending_ops();
-        if ops.is_empty() { return Box::new([]); }
+        if ops.is_empty() {
+            return Box::new([]);
+        }
         encode_update(&ops).into()
     }
 
@@ -237,9 +249,7 @@ impl WasmDocument {
     /// `now_ms` = Date.now(), `color` = 0xRRGGBBAA.
     #[wasm_bindgen]
     pub fn encode_local_cursor(&self, x: f32, y: f32, now_ms: u64, color: u32) -> Box<[u8]> {
-        let state = crate::awareness::CursorState::new(
-            self.inner.local_actor, x, y, now_ms, color,
-        );
+        let state = crate::awareness::CursorState::new(self.inner.local_actor, x, y, now_ms, color);
         Box::new(encode_cursor(&state))
     }
 
@@ -296,7 +306,12 @@ impl WasmDocument {
         vy1: f32,
         stroke_expand: f32,
     ) -> *const u8 {
-        let viewport = Aabb { min_x: vx0, min_y: vy0, max_x: vx1, max_y: vy1 };
+        let viewport = Aabb {
+            min_x: vx0,
+            min_y: vy0,
+            max_x: vx1,
+            max_y: vy1,
+        };
         self.render_buf.clear();
 
         for id in self.inner.visible_stroke_ids() {
@@ -305,7 +320,9 @@ impl WasmDocument {
                 let effective_bounds = if props.transform.value.is_identity() {
                     data.bounds.expanded(stroke_expand)
                 } else {
-                    data.bounds.transform(&props.transform.value).expanded(stroke_expand)
+                    data.bounds
+                        .transform(&props.transform.value)
+                        .expanded(stroke_expand)
                 };
 
                 if !effective_bounds.intersects(&viewport) {
@@ -345,7 +362,8 @@ impl WasmDocument {
     #[wasm_bindgen]
     pub fn get_stroke_points_ptr(&self, stroke_id: &[u8]) -> *const f32 {
         let id = decode_op_id(stroke_id);
-        self.inner.get_stroke(&id)
+        self.inner
+            .get_stroke(&id)
             .map(|(d, _)| d.points.as_ptr() as *const f32)
             .unwrap_or(std::ptr::null())
     }
@@ -354,7 +372,10 @@ impl WasmDocument {
     #[wasm_bindgen]
     pub fn get_stroke_point_count(&self, stroke_id: &[u8]) -> usize {
         let id = decode_op_id(stroke_id);
-        self.inner.get_stroke(&id).map(|(d, _)| d.points.len()).unwrap_or(0)
+        self.inner
+            .get_stroke(&id)
+            .map(|(d, _)| d.points.len())
+            .unwrap_or(0)
     }
 
     /// All visible stroke IDs in z-order as a flat byte array (16B each).
@@ -459,17 +480,26 @@ impl WasmDocument {
             "{{\"total_items\":{},\"visible\":{},\"tombstones\":{},\
              \"tombstone_ratio\":{:.3},\"gc_gen\":{},\"pending_ops\":{},\
              \"causal_buffer\":{},\"awareness_peers\":{}}}",
-            s.total_items, s.visible_items, s.tombstones,
-            s.tombstone_ratio, s.gc_generation, s.pending_ops,
-            self.buffer.len(), self.awareness.actor_count(),
+            s.total_items,
+            s.visible_items,
+            s.tombstones,
+            s.tombstone_ratio,
+            s.gc_generation,
+            s.pending_ops,
+            self.buffer.len(),
+            self.awareness.actor_count(),
         )
     }
 
     #[wasm_bindgen]
-    pub fn actor_id(&self) -> u64 { self.inner.local_actor.0 }
+    pub fn actor_id(&self) -> u64 {
+        self.inner.local_actor.0
+    }
 
     #[wasm_bindgen]
-    pub fn lamport(&self) -> u64 { self.inner.clock.0 }
+    pub fn lamport(&self) -> u64 {
+        self.inner.clock.0
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -518,12 +548,20 @@ fn write_stroke_to_buf(
 
 fn decode_transform_from_bytes(bytes: &[u8]) -> Transform2D {
     let r = |off: usize| -> f32 {
-        bytes.get(off..off + 4)
+        bytes
+            .get(off..off + 4)
             .and_then(|s| s.try_into().ok())
             .map(f32::from_le_bytes)
             .unwrap_or(0.0)
     };
-    Transform2D { a: r(0), b: r(4), c: r(8), d: r(12), tx: r(16), ty: r(20) }
+    Transform2D {
+        a: r(0),
+        b: r(4),
+        c: r(8),
+        d: r(12),
+        tx: r(16),
+        ty: r(20),
+    }
 }
 
 // ─── Free functions ───────────────────────────────────────────────────────────

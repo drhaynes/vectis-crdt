@@ -24,9 +24,9 @@
 #[cfg(feature = "compress")]
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
-use crate::error::VectisResult;
 #[cfg(feature = "compress")]
 use crate::error::VectisError;
+use crate::error::VectisResult;
 
 /// Minimum byte length to bother compressing.
 pub const COMPRESS_THRESHOLD: usize = 200;
@@ -51,9 +51,8 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
 pub fn decompress(data: &[u8]) -> VectisResult<Vec<u8>> {
     #[cfg(feature = "compress")]
     {
-        decompress_size_prepended(data).map_err(|e| {
-            VectisError::DecodingError(format!("lz4 decompress: {e}"))
-        })
+        decompress_size_prepended(data)
+            .map_err(|e| VectisError::DecodingError(format!("lz4 decompress: {e}")))
     }
     #[cfg(not(feature = "compress"))]
     {

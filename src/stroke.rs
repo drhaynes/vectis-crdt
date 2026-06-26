@@ -1,5 +1,5 @@
-use crate::types::*;
 use crate::rga::StrokeId;
+use crate::types::*;
 use std::collections::HashMap;
 
 // ─── StrokePoint ─────────────────────────────────────────────────────────────
@@ -22,7 +22,11 @@ impl StrokePoint {
 
     #[inline]
     pub fn basic(x: f32, y: f32) -> Self {
-        Self { x, y, pressure: 1.0 }
+        Self {
+            x,
+            y,
+            pressure: 1.0,
+        }
     }
 }
 
@@ -62,12 +66,25 @@ impl Aabb {
         let mut max_x = f32::NEG_INFINITY;
         let mut max_y = f32::NEG_INFINITY;
         for p in points {
-            if p.x < min_x { min_x = p.x; }
-            if p.y < min_y { min_y = p.y; }
-            if p.x > max_x { max_x = p.x; }
-            if p.y > max_y { max_y = p.y; }
+            if p.x < min_x {
+                min_x = p.x;
+            }
+            if p.y < min_y {
+                min_y = p.y;
+            }
+            if p.x > max_x {
+                max_x = p.x;
+            }
+            if p.y > max_y {
+                max_y = p.y;
+            }
         }
-        Aabb { min_x, min_y, max_x, max_y }
+        Aabb {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
     }
 
     /// Returns true if `self` overlaps with `other`.
@@ -108,12 +125,25 @@ impl Aabb {
         for (x, y) in corners {
             let tx = t.a * x + t.c * y + t.tx;
             let ty = t.b * x + t.d * y + t.ty;
-            if tx < min_x { min_x = tx; }
-            if ty < min_y { min_y = ty; }
-            if tx > max_x { max_x = tx; }
-            if ty > max_y { max_y = ty; }
+            if tx < min_x {
+                min_x = tx;
+            }
+            if ty < min_y {
+                min_y = ty;
+            }
+            if tx > max_x {
+                max_x = tx;
+            }
+            if ty > max_y {
+                max_y = ty;
+            }
         }
-        Aabb { min_x, min_y, max_x, max_y }
+        Aabb {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
     }
 }
 
@@ -192,12 +222,12 @@ fn rdp_indices(points: &[StrokePoint], epsilon: f32) -> Vec<usize> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ToolKind {
-    Pen     = 0,
-    Eraser  = 1,
-    Marker  = 2,
-    Laser   = 3,
-    Shape   = 4,
-    Arrow   = 5,
+    Pen = 0,
+    Eraser = 1,
+    Marker = 2,
+    Laser = 3,
+    Shape = 4,
+    Arrow = 5,
 }
 
 impl ToolKind {
@@ -236,7 +266,11 @@ impl StrokeData {
     /// Canonical constructor. Automatically computes `bounds` from `points`.
     pub fn new(points: Box<[StrokePoint]>, tool: ToolKind) -> Self {
         let bounds = Aabb::from_points(&points);
-        Self { points, tool, bounds }
+        Self {
+            points,
+            tool,
+            bounds,
+        }
     }
 
     /// Simplify points in-place using Ramer-Douglas-Peucker.
@@ -314,7 +348,14 @@ pub struct Transform2D {
 impl Default for Transform2D {
     fn default() -> Self {
         // Identity matrix
-        Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 0.0, ty: 0.0 }
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            tx: 0.0,
+            ty: 0.0,
+        }
     }
 }
 
@@ -371,7 +412,9 @@ pub struct StrokeStore {
 
 impl StrokeStore {
     pub fn new() -> Self {
-        Self { strokes: HashMap::new() }
+        Self {
+            strokes: HashMap::new(),
+        }
     }
 
     pub fn insert(&mut self, id: StrokeId, data: StrokeData, props: StrokeProperties) {
@@ -413,9 +456,18 @@ mod tests {
 
     #[test]
     fn lww_register_apply() {
-        let id_a = OpId { lamport: LamportTs(1), actor: ActorId(1) };
-        let id_b = OpId { lamport: LamportTs(2), actor: ActorId(1) };
-        let id_c = OpId { lamport: LamportTs(1), actor: ActorId(1) };
+        let id_a = OpId {
+            lamport: LamportTs(1),
+            actor: ActorId(1),
+        };
+        let id_b = OpId {
+            lamport: LamportTs(2),
+            actor: ActorId(1),
+        };
+        let id_c = OpId {
+            lamport: LamportTs(1),
+            actor: ActorId(1),
+        };
 
         let mut reg = LwwRegister::new(10u32, id_a);
         assert!(reg.apply(20, id_b));
@@ -428,7 +480,14 @@ mod tests {
     fn transform2d_default_is_identity() {
         let t = Transform2D::default();
         assert!(t.is_identity());
-        let t2 = Transform2D { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 1.0, ty: 0.0 };
+        let t2 = Transform2D {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            tx: 1.0,
+            ty: 0.0,
+        };
         assert!(!t2.is_identity());
     }
 
@@ -448,9 +507,24 @@ mod tests {
 
     #[test]
     fn aabb_intersects() {
-        let a = Aabb { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 10.0 };
-        let b = Aabb { min_x: 5.0, min_y: 5.0, max_x: 15.0, max_y: 15.0 };
-        let c = Aabb { min_x: 20.0, min_y: 20.0, max_x: 30.0, max_y: 30.0 };
+        let a = Aabb {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        };
+        let b = Aabb {
+            min_x: 5.0,
+            min_y: 5.0,
+            max_x: 15.0,
+            max_y: 15.0,
+        };
+        let c = Aabb {
+            min_x: 20.0,
+            min_y: 20.0,
+            max_x: 30.0,
+            max_y: 30.0,
+        };
         assert!(a.intersects(&b));
         assert!(b.intersects(&a));
         assert!(!a.intersects(&c));
@@ -458,7 +532,12 @@ mod tests {
 
     #[test]
     fn aabb_expanded() {
-        let a = Aabb { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 10.0 };
+        let a = Aabb {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        };
         let e = a.expanded(2.0);
         assert_eq!(e.min_x, -2.0);
         assert_eq!(e.max_x, 12.0);
@@ -466,7 +545,12 @@ mod tests {
 
     #[test]
     fn aabb_transform_identity_leaves_bounds_unchanged() {
-        let a = Aabb { min_x: 1.0, min_y: 2.0, max_x: 5.0, max_y: 6.0 };
+        let a = Aabb {
+            min_x: 1.0,
+            min_y: 2.0,
+            max_x: 5.0,
+            max_y: 6.0,
+        };
         let t = Transform2D::default();
         let b = a.transform(&t);
         assert!((b.min_x - 1.0).abs() < 1e-5);
@@ -477,8 +561,20 @@ mod tests {
 
     #[test]
     fn aabb_transform_translation() {
-        let a = Aabb { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 10.0 };
-        let t = Transform2D { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 5.0, ty: -3.0 };
+        let a = Aabb {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        };
+        let t = Transform2D {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            tx: 5.0,
+            ty: -3.0,
+        };
         let b = a.transform(&t);
         assert!((b.min_x - 5.0).abs() < 1e-5);
         assert!((b.min_y - (-3.0)).abs() < 1e-5);
@@ -517,10 +613,8 @@ mod tests {
 
     #[test]
     fn rdp_two_points_unchanged() {
-        let pts: Box<[StrokePoint]> = vec![
-            StrokePoint::basic(0.0, 0.0),
-            StrokePoint::basic(10.0, 10.0),
-        ].into();
+        let pts: Box<[StrokePoint]> =
+            vec![StrokePoint::basic(0.0, 0.0), StrokePoint::basic(10.0, 10.0)].into();
         let mut data = StrokeData::new(pts, ToolKind::Pen);
         assert_eq!(data.simplify(0.5), 0);
         assert_eq!(data.points.len(), 2);
@@ -528,10 +622,8 @@ mod tests {
 
     #[test]
     fn stroke_data_bounds_computed_on_new() {
-        let pts: Box<[StrokePoint]> = vec![
-            StrokePoint::basic(3.0, 7.0),
-            StrokePoint::basic(9.0, 2.0),
-        ].into();
+        let pts: Box<[StrokePoint]> =
+            vec![StrokePoint::basic(3.0, 7.0), StrokePoint::basic(9.0, 2.0)].into();
         let data = StrokeData::new(pts, ToolKind::Pen);
         assert_eq!(data.bounds.min_x, 3.0);
         assert_eq!(data.bounds.min_y, 2.0);

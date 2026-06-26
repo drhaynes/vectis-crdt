@@ -55,7 +55,9 @@ impl PyDocument {
         if actor_id == 0 {
             return Err(PyValueError::new_err("actor_id 0 is reserved"));
         }
-        Ok(Self { inner: Document::new(ActorId(actor_id)) })
+        Ok(Self {
+            inner: Document::new(ActorId(actor_id)),
+        })
     }
 
     /// Restore a document from a binary snapshot produced by `encode_snapshot()`.
@@ -153,8 +155,7 @@ impl PyDocument {
     /// Operations are applied in causal order. Call this for every update
     /// received over the network.
     fn apply_update(&mut self, data: &[u8]) -> PyResult<()> {
-        let ops = decode_update(data)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let ops = decode_update(data).map_err(|e| PyValueError::new_err(e.to_string()))?;
         for op in ops {
             self.inner.apply_remote(op);
         }
@@ -192,7 +193,11 @@ impl PyDocument {
     ///
     /// Returns a list of 16-byte `bytes` objects.
     fn visible_stroke_ids(&self) -> Vec<Vec<u8>> {
-        self.inner.visible_stroke_ids().into_iter().map(id_to_bytes).collect()
+        self.inner
+            .visible_stroke_ids()
+            .into_iter()
+            .map(id_to_bytes)
+            .collect()
     }
 
     // ─── Simplification ───────────────────────────────────────────────────────

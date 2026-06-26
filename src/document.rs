@@ -1,5 +1,5 @@
+use crate::rga::{ItemState, RgaArray, RgaItem, StrokeId};
 use crate::types::*;
-use crate::rga::{RgaArray, RgaItem, ItemState, StrokeId};
 
 /// Maximum number of undo steps retained per session.
 /// Prevents unbounded memory growth in long drawing sessions.
@@ -32,20 +32,26 @@ pub struct LwwMap<K: Eq + std::hash::Hash, V: Clone> {
 
 impl<K: Eq + std::hash::Hash, V: Clone> LwwMap<K, V> {
     pub fn new() -> Self {
-        Self { entries: HashMap::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     pub fn set(&mut self, key: K, value: V, ts: OpId) {
         self.entries
             .entry(key)
-            .and_modify(|reg| { reg.apply(Some(value.clone()), ts); })
+            .and_modify(|reg| {
+                reg.apply(Some(value.clone()), ts);
+            })
             .or_insert_with(|| LwwRegister::new(Some(value), ts));
     }
 
     pub fn delete(&mut self, key: K, ts: OpId) {
         self.entries
             .entry(key)
-            .and_modify(|reg| { reg.apply(None, ts); })
+            .and_modify(|reg| {
+                reg.apply(None, ts);
+            })
             .or_insert_with(|| LwwRegister::new(None, ts));
     }
 
@@ -224,7 +230,10 @@ impl Document {
     /// Generate the next OpId for a local operation.
     pub(crate) fn next_op_id(&mut self) -> OpId {
         let ts = self.clock.tick();
-        let id = OpId { lamport: ts, actor: self.local_actor };
+        let id = OpId {
+            lamport: ts,
+            actor: self.local_actor,
+        };
         self.version.advance(self.local_actor, ts.0);
         id
     }
@@ -235,7 +244,11 @@ impl Document {
     ///
     /// If `simplify_epsilon > 0`, automatically applies Ramer-Douglas-Peucker
     /// before storing and broadcasting — reducing point count and wire size.
-    pub fn insert_stroke(&mut self, mut data: StrokeData, properties: StrokeProperties) -> StrokeId {
+    pub fn insert_stroke(
+        &mut self,
+        mut data: StrokeData,
+        properties: StrokeProperties,
+    ) -> StrokeId {
         // Auto-simplify before storing. Benefits: smaller RAM, smaller wire payload.
         // Threshold > 2 because simplify() already no-ops on ≤ 2 points.
         if self.simplify_epsilon > 0.0 && data.points.len() > 2 {
@@ -260,7 +273,8 @@ impl Document {
         };
 
         self.stroke_order.integrate(item);
-        self.stroke_store.insert(id, data.clone(), properties.clone());
+        self.stroke_store
+            .insert(id, data.clone(), properties.clone());
 
         self.pending_ops.push(Operation::InsertStroke {
             id,
@@ -287,7 +301,8 @@ impl Document {
         let id = self.next_op_id();
         let deleted = self.stroke_order.mark_deleted(target, id);
         if deleted {
-            self.pending_ops.push(Operation::DeleteStroke { id, target });
+            self.pending_ops
+                .push(Operation::DeleteStroke { id, target });
         }
         deleted
     }
@@ -380,7 +395,13 @@ impl Document {
         let affected = op.target_stroke();
 
         match op {
-            Operation::InsertStroke { id, origin_left, origin_right, data, properties } => {
+            Operation::InsertStroke {
+                id,
+                origin_left,
+                origin_right,
+                data,
+                properties,
+            } => {
                 // Skip if already applied (idempotent).
                 if !self.stroke_store.contains(&id) {
                     // Enforce document size limit. Silently drop if exceeded —
@@ -409,20 +430,26 @@ impl Document {
             Operation::UpdateProperty { id, target, update } => {
                 if let Some((_, props)) = self.stroke_store.get_mut(&target) {
                     match update {
-                        PropertyUpdate::Color(v) => { props.color.apply(v, id); }
-                        PropertyUpdate::StrokeWidth(v) => { props.stroke_width.apply(v, id); }
-                        PropertyUpdate::Opacity(v) => { props.opacity.apply(v, id); }
-                        PropertyUpdate::Transform(v) => { props.transform.apply(v, id); }
+                        PropertyUpdate::Color(v) => {
+                            props.color.apply(v, id);
+                        }
+                        PropertyUpdate::StrokeWidth(v) => {
+                            props.stroke_width.apply(v, id);
+                        }
+                        PropertyUpdate::Opacity(v) => {
+                            props.opacity.apply(v, id);
+                        }
+                        PropertyUpdate::Transform(v) => {
+                            props.transform.apply(v, id);
+                        }
                     }
                 }
             }
 
-            Operation::UpdateMetadata { id, key, value } => {
-                match value {
-                    Some(v) => self.metadata.set(key, v, id),
-                    None => self.metadata.delete(key, id),
-                }
-            }
+            Operation::UpdateMetadata { id, key, value } => match value {
+                Some(v) => self.metadata.set(key, v, id),
+                None => self.metadata.delete(key, id),
+            },
         }
 
         affected
@@ -519,7 +546,10 @@ mod tests {
     }
 
     fn simple_stroke(points: &[(f32, f32)]) -> (StrokeData, StrokeProperties) {
-        let pts: Box<[StrokePoint]> = points.iter().map(|&(x, y)| StrokePoint::basic(x, y)).collect();
+        let pts: Box<[StrokePoint]> = points
+            .iter()
+            .map(|&(x, y)| StrokePoint::basic(x, y))
+            .collect();
         let data = StrokeData::new(pts, ToolKind::Pen);
         let props = StrokeProperties::new(0xFF0000FF, 2.0, 1.0, OpId::ZERO);
         (data, props)
@@ -573,8 +603,12 @@ mod tests {
         let ops_a = std::mem::take(&mut doc_a.pending_ops);
         let ops_b = std::mem::take(&mut doc_b.pending_ops);
 
-        for op in ops_b.clone() { doc_a.apply_remote(op); }
-        for op in ops_a.clone() { doc_b.apply_remote(op); }
+        for op in ops_b.clone() {
+            doc_a.apply_remote(op);
+        }
+        for op in ops_a.clone() {
+            doc_b.apply_remote(op);
+        }
 
         let visible_a = doc_a.visible_stroke_ids();
         let visible_b = doc_b.visible_stroke_ids();
@@ -622,7 +656,10 @@ mod tests {
 
         // Simulate remote delete arriving before undo
         let del_op = Operation::DeleteStroke {
-            id: OpId { lamport: LamportTs(99), actor: ActorId(2) },
+            id: OpId {
+                lamport: LamportTs(99),
+                actor: ActorId(2),
+            },
             target: id,
         };
         doc.apply_remote(del_op);
@@ -661,7 +698,10 @@ mod tests {
 
         // Stroke stored with simplified points
         let (stored, _) = doc.get_stroke(&id).unwrap();
-        assert!(stored.points.len() < 100, "auto-simplify should reduce points");
+        assert!(
+            stored.points.len() < 100,
+            "auto-simplify should reduce points"
+        );
         assert_eq!(stored.points.len(), 2, "straight line → 2 points");
     }
 

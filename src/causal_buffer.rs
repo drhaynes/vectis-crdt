@@ -35,9 +35,7 @@ fn is_causally_ready(op: &Operation, doc: &Document) -> bool {
             // Apply even if it's already a tombstone (idempotent).
             doc.stroke_order.index.contains_key(target)
         }
-        Operation::UpdateProperty { target, .. } => {
-            doc.stroke_store.contains(target)
-        }
+        Operation::UpdateProperty { target, .. } => doc.stroke_store.contains(target),
         Operation::UpdateMetadata { .. } => true,
     }
 }
@@ -58,7 +56,10 @@ impl CausalBuffer {
     }
 
     pub fn with_capacity(max_capacity: usize) -> Self {
-        Self { pending: Vec::new(), max_capacity }
+        Self {
+            pending: Vec::new(),
+            max_capacity,
+        }
     }
 
     /// Returns the number of buffered (pending) operations.

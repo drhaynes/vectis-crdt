@@ -121,7 +121,10 @@ impl RgaArray {
         let origin_left_pos: isize = if item.origin_left.is_zero() {
             -1
         } else {
-            self.index.get(&item.origin_left).map(|&i| i as isize).unwrap_or(-1)
+            self.index
+                .get(&item.origin_left)
+                .map(|&i| i as isize)
+                .unwrap_or(-1)
         };
 
         let mut insert_pos = scan_start;
@@ -132,7 +135,10 @@ impl RgaArray {
             let existing_ol_pos: isize = if existing.origin_left.is_zero() {
                 -1
             } else {
-                self.index.get(&existing.origin_left).map(|&p| p as isize).unwrap_or(-1)
+                self.index
+                    .get(&existing.origin_left)
+                    .map(|&p| p as isize)
+                    .unwrap_or(-1)
             };
 
             if existing_ol_pos < origin_left_pos {
@@ -218,7 +224,10 @@ mod tests {
     use super::*;
 
     fn make_item(lamport: u64, actor: u64, ol: OpId, or_: OpId) -> RgaItem {
-        let id = OpId { lamport: LamportTs(lamport), actor: ActorId(actor) };
+        let id = OpId {
+            lamport: LamportTs(lamport),
+            actor: ActorId(actor),
+        };
         RgaItem {
             id,
             origin_left: ol,
@@ -275,7 +284,10 @@ mod tests {
         let a = make_item(1, 1, OpId::ZERO, OpId::ZERO);
         arr.integrate(a.clone());
         assert_eq!(arr.tombstone_count, 0);
-        let del_id = OpId { lamport: LamportTs(2), actor: ActorId(1) };
+        let del_id = OpId {
+            lamport: LamportTs(2),
+            actor: ActorId(1),
+        };
         assert!(arr.mark_deleted(a.id, del_id));
         assert_eq!(arr.tombstone_count, 1);
         assert_eq!(arr.visible_items().count(), 0);

@@ -39,7 +39,13 @@ pub struct CursorState {
 
 impl CursorState {
     pub fn new(actor: ActorId, x: f32, y: f32, updated_at_ms: u64, color: u32) -> Self {
-        Self { actor, x, y, updated_at_ms, color }
+        Self {
+            actor,
+            x,
+            y,
+            updated_at_ms,
+            color,
+        }
     }
 }
 
@@ -55,11 +61,17 @@ pub struct AwarenessStore {
 
 impl AwarenessStore {
     pub fn new() -> Self {
-        Self { cursors: HashMap::new(), ttl_ms: 30_000 }
+        Self {
+            cursors: HashMap::new(),
+            ttl_ms: 30_000,
+        }
     }
 
     pub fn with_ttl(ttl_ms: u64) -> Self {
-        Self { cursors: HashMap::new(), ttl_ms }
+        Self {
+            cursors: HashMap::new(),
+            ttl_ms,
+        }
     }
 
     /// Insert or update a cursor state. Only accepted if newer than current.
@@ -101,9 +113,8 @@ impl AwarenessStore {
     pub fn evict_stale(&mut self, now_ms: u64) -> usize {
         let ttl = self.ttl_ms;
         let before = self.cursors.len();
-        self.cursors.retain(|_, state| {
-            now_ms.saturating_sub(state.updated_at_ms) < ttl
-        });
+        self.cursors
+            .retain(|_, state| now_ms.saturating_sub(state.updated_at_ms) < ttl);
         before - self.cursors.len()
     }
 
@@ -164,11 +175,17 @@ pub fn decode_cursor(bytes: &[u8]) -> Option<CursorState> {
         return None;
     }
     let actor = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
-    let x     = f32::from_le_bytes(bytes[8..12].try_into().ok()?);
-    let y     = f32::from_le_bytes(bytes[12..16].try_into().ok()?);
-    let ts    = u64::from_le_bytes(bytes[16..24].try_into().ok()?);
+    let x = f32::from_le_bytes(bytes[8..12].try_into().ok()?);
+    let y = f32::from_le_bytes(bytes[12..16].try_into().ok()?);
+    let ts = u64::from_le_bytes(bytes[16..24].try_into().ok()?);
     let color = u32::from_le_bytes(bytes[24..28].try_into().ok()?);
-    Some(CursorState { actor: ActorId(actor), x, y, updated_at_ms: ts, color })
+    Some(CursorState {
+        actor: ActorId(actor),
+        x,
+        y,
+        updated_at_ms: ts,
+        color,
+    })
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
